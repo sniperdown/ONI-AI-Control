@@ -1,0 +1,7 @@
+# minimumSupportedBuild 必须是【整数】—— 已核实 KMod.PackagedModInfo.minimumSupportedBuild 是 int32。
+# 游戏主菜单角落显示的是 "U59-744825-S"：U59 = 更新号，744825 = build，-S = 渠道。这里只能填 build 数字。
+minimumSupportedBuild: 744825
+lastWorkingBuild: 744825
+version: 0.93.6
+APIVersion: 2
+supportedContent: ALL

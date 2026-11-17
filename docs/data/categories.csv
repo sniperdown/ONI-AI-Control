@@ -1,0 +1,77 @@
+﻿分类key,中文名,是否顶层页签,备注
+BASE,"基地",是,顶层页签（.po 里值带 <link="BUILDCATEGORY...">）
+FOODANDAGRICULTURE,"食物",是,顶层页签（.po 里值带 <link="BUILDCATEGORY...">）
+HEALTHANDHAPPINESS,"住宿",是,顶层页签（.po 里值带 <link="BUILDCATEGORY...">）
+INDUSTRIAL,"工业",是,顶层页签（.po 里值带 <link="BUILDCATEGORY...">）
+INFRASTRUCTURE,"实用",是,顶层页签（.po 里值带 <link="BUILDCATEGORY...">）
+LOGISTICS,"物流",是,顶层页签（.po 里值带 <link="BUILDCATEGORY...">）
+ADVANCED,"高级",否,子分类；挂哪个顶层页签未确认
+ARCHAEOLOGY,"考古",否,子分类；挂哪个顶层页签未确认
+AUTOMATED,"自动化",否,子分类；挂哪个顶层页签未确认
+BATTERIES,"蓄电池",否,子分类；挂哪个顶层页签未确认
+BEDS,"床位",否,子分类；挂哪个顶层页签未确认
+BUILDMENUPORTS,"端口",否,子分类；挂哪个顶层页签未确认
+CARGO,"货舱",否,子分类；挂哪个顶层页签未确认
+CONDUITSENSORS,"管道传感器",否,子分类；挂哪个顶层页签未确认
+CONVEYANCE,"",否,子分类；挂哪个顶层页签未确认
+CONVEYANCESTRUCTURES,"构造",否,子分类；挂哪个顶层页签未确认
+COOKING,"烹饪",否,子分类；挂哪个顶层页签未确认
+DECOR,"装饰",否,子分类；挂哪个顶层页签未确认
+DINING,"饮食",否,子分类；挂哪个顶层页签未确认
+DISTRIBUTORS,"分配",否,子分类；挂哪个顶层页签未确认
+DOORS,"门",否,子分类；挂哪个顶层页签未确认
+ELECTROBANKBUILDINGS,"转换器",否,子分类；挂哪个顶层页签未确认
+ENGINES,"引擎",否,子分类；挂哪个顶层页签未确认
+EQUIPMENT,"装备",否,子分类；挂哪个顶层页签未确认
+FARMING,"耕种",否,子分类；挂哪个顶层页签未确认
+FITTINGS,"配件",否,子分类；挂哪个顶层页签未确认
+FURNITURE,"家具",否,子分类；挂哪个顶层页签未确认
+GENERATORS,"发电机",否,子分类；挂哪个顶层页签未确认
+HYGIENE,"卫生",否,子分类；挂哪个顶层页签未确认
+INDUSTRIALSTATION,"工业",否,子分类；挂哪个顶层页签未确认
+LADDERS,"梯子",否,子分类；挂哪个顶层页签未确认
+LIGHTS,"照明",否,子分类；挂哪个顶层页签未确认
+LOGICAUDIO,"环境",否,子分类；挂哪个顶层页签未确认
+LOGICGATES,"逻辑门",否,子分类；挂哪个顶层页签未确认
+LOGICMANAGER,"监测",否,子分类；挂哪个顶层页签未确认
+MANUFACTURING,"制造",否,子分类；挂哪个顶层页签未确认
+MATERIALS,"材料",否,子分类；挂哪个顶层页签未确认
+MEDICAL,"医疗",否,子分类；挂哪个顶层页签未确认
+METEORDEFENSE,"流星抵御",否,子分类；挂哪个顶层页签未确认
+MISSILES,"流星抵御",否,子分类；挂哪个顶层页签未确认
+MODULE,"舱块",否,子分类；挂哪个顶层页签未确认
+OIL,"石油",否,子分类；挂哪个顶层页签未确认
+OPERATIONS,"操作",否,子分类；挂哪个顶层页签未确认
+ORGANIC,"有机物",否,子分类；挂哪个顶层页签未确认
+OXYGEN,"氧气",否,子分类；挂哪个顶层页签未确认
+PIPES,"管道",否,子分类；挂哪个顶层页签未确认
+PLUMBINGSTRUCTURES,"水管",否,子分类；挂哪个顶层页签未确认
+PORTS,"端口",否,子分类；挂哪个顶层页签未确认
+POWERCONTROL,"",否,子分类；挂哪个顶层页签未确认
+PRINTINGPODS,"打印舱",否,子分类；挂哪个顶层页签未确认
+PRODUCERS,"生产",否,子分类；挂哪个顶层页签未确认
+PUMPS,"泵",否,子分类；挂哪个顶层页签未确认
+RANCHING,"养殖",否,子分类；挂哪个顶层页签未确认
+RECREATION,"娱乐",否,子分类；挂哪个顶层页签未确认
+REFINING,"精炼",否,子分类；挂哪个顶层页签未确认
+RESEARCH,"研究",否,子分类；挂哪个顶层页签未确认
+ROCKETNAV,"导航",否,子分类；挂哪个顶层页签未确认
+ROCKETRY,"火箭",否,子分类；挂哪个顶层页签未确认
+ROCKETSTRUCTURES,"构造",否,子分类；挂哪个顶层页签未确认
+SANITATION,"卫生",否,子分类；挂哪个顶层页签未确认
+SCRUBBERS,"净化",否,子分类；挂哪个顶层页签未确认
+SENSORS,"传感器",否,子分类；挂哪个顶层页签未确认
+STORAGE,"存储",否,子分类；挂哪个顶层页签未确认
+SWITCHES,"开关",否,子分类；挂哪个顶层页签未确认
+TANKS,"液缸",否,子分类；挂哪个顶层页签未确认
+TELESCOPES,"望远镜",否,子分类；挂哪个顶层页签未确认
+TEMPERATURE,"温度",否,子分类；挂哪个顶层页签未确认
+TILES,"砖块与干板墙",否,子分类；挂哪个顶层页签未确认
+TRANSMISSIONS,"传输",否,子分类；挂哪个顶层页签未确认
+TRANSPORT,"运载管道",否,子分类；挂哪个顶层页签未确认
+UTILITIES,"温度",否,子分类；挂哪个顶层页签未确认
+VALVES,"阀",否,子分类；挂哪个顶层页签未确认
+VENTILATIONSTRUCTURES,"通风",否,子分类；挂哪个顶层页签未确认
+WASHROOM,"厕所",否,子分类；挂哪个顶层页签未确认
+WELLNESS,"健康",否,子分类；挂哪个顶层页签未确认
+WIRES,"电线",否,子分类；挂哪个顶层页签未确认

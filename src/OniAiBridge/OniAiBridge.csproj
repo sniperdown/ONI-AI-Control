@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 目标框架对齐游戏里的现役 mod（实测 FastSave 3.13 为 .NETStandard,Version=v2.1）。
+       游戏程序集路径不写死：优先用 -p:OniGameDir=... ，否则读环境变量 ONI_GAME_DIR。
+       仓库里不 vendored 任何游戏 dll（见 .gitignore）。 -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>OniAiBridge</AssemblyName>
+    <RootNamespace>OniAiBridge</RootNamespace>
+    <Nullable>disable</Nullable>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Version>0.93.6</Version>
+    <Deterministic>true</Deterministic>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(OniGameDir)' == ''">
+    <OniGameDir>$(ONI_GAME_DIR)</OniGameDir>
+  </PropertyGroup>
+
+  <Target Name="CheckGameDir" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(OniGameDir)' == ''"
+           Text="OniGameDir 未设置。用 dotnet build -p:OniGameDir=&lt;ONI_INSTALL_DIR&gt; 或设环境变量 ONI_GAME_DIR。" />
+    <Error Condition="!Exists('$(OniGameDir)\OxygenNotIncluded_Data\Managed\Assembly-CSharp.dll')"
+           Text="找不到 $(OniGameDir)\OxygenNotIncluded_Data\Managed\Assembly-CSharp.dll —— OniGameDir 指错了。" />
+  </Target>
+
+  <ItemGroup>
+    <!-- Private=false：绝不把这些 dll 复制进产出目录（游戏自己会提供） -->
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- M5.2d：手写 JSON 的下发前校验要用它（游戏随包自带 7.0.0.0，不额外打包） -->
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ScreenCaptureModule">
+    <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\UnityEngine.ScreenCaptureModule.dll</HintPath>
+  </Reference>
+  <Reference Include="UnityEngine.ImageConversionModule">
+    <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\UnityEngine.ImageConversionModule.dll</HintPath>
+  </Reference>
+  <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(OniGameDir)\OxygenNotIncluded_Data\Managed\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

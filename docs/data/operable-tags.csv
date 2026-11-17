@@ -1,0 +1,18 @@
+﻿标签名,被哪些类引用,判据
+Backwall,"BuildingDef",IL 里对 GameTags.Backwall 的引用（这些类与"操作"直接相关）
+BlockBuildOverPlantFeature,"BuildingDef",IL 里对 GameTags.BlockBuildOverPlantFeature 的引用（这些类与"操作"直接相关）
+Dead,"Storage",IL 里对 GameTags.Dead 的引用（这些类与"操作"直接相关）
+Entombed,"BuildingComplete",IL 里对 GameTags.Entombed 的引用（这些类与"操作"直接相关）
+HasChores,"Workable",IL 里对 GameTags.HasChores 的引用（这些类与"操作"直接相关）
+HasInvalidPorts,"BuildingDef",IL 里对 GameTags.HasInvalidPorts 的引用（这些类与"操作"直接相关）
+MutatedSeed,"ComplexFabricator",IL 里对 GameTags.MutatedSeed 的引用（这些类与"操作"直接相关）
+NotConversationTopic,"Workable",IL 里对 GameTags.NotConversationTopic 的引用（这些类与"操作"直接相关）
+Operational,"Operational; Generator",IL 里对 GameTags.Operational 的引用（这些类与"操作"直接相关）
+Preserved,"Storage",IL 里对 GameTags.Preserved 的引用（这些类与"操作"直接相关）
+RefinedMetal,"Generator",IL 里对 GameTags.RefinedMetal 的引用（这些类与"操作"直接相关）
+Rocket,"BuildingDef",IL 里对 GameTags.Rocket 的引用（这些类与"操作"直接相关）
+RocketEnvelopeTile,"BuildingDef",IL 里对 GameTags.RocketEnvelopeTile 的引用（这些类与"操作"直接相关）
+RocketInSpace,"BuildingComplete",IL 里对 GameTags.RocketInSpace 的引用（这些类与"操作"直接相关）
+Sealed,"Storage",IL 里对 GameTags.Sealed 的引用（这些类与"操作"直接相关）
+TemplateBuilding,"BuildingComplete",IL 里对 GameTags.TemplateBuilding 的引用（这些类与"操作"直接相关）
+Transition,"Door",IL 里对 GameTags.Transition 的引用（这些类与"操作"直接相关）

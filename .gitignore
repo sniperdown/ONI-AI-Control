@@ -1,0 +1,32 @@
+# --- 构建产物 ---
+bin/
+obj/
+dist/
+*.user
+*.suo
+.vs/
+
+# --- 绝不提交游戏程序集（从 -p:OniGameDir / ONI_GAME_DIR 引用） ---
+Assembly-CSharp.dll
+Assembly-CSharp-firstpass.dll
+0Harmony.dll
+UnityEngine*.dll
+Newtonsoft.Json.dll
+
+# --- 本地/敏感 ---
+*.log
+*.sav
+*.json.bak
+settings.json
+preview.xcf
+preview.psd
+.DS_Store
+Thumbs.db
+
+# --- 非源码（2026-11-17 建仓时补）---
+backup/
+logs/
+
+# --- 待定：23.75 MB 的单文件数据导出，src/ 与 docs/ 里都没有引用它。
+#     先不入库；要纳入版本控制就把下面这行删掉再 add。 ---
+buildings-big.xml

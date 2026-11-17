@@ -1,3 +1,73 @@
+## [修正] 0.93.8 / M6.92 —— `mop` 的 `alreadyMarked` 补回 `MopPlacer`（+ 顶层聚合漏算）+ `/v1/saves` 补扫云存档（2026-11-17）
+
+> 两条都是 0.93.6 真机验收时挖出来的**自己的** bug。修完都在线验了（同机、同档、同一格）。
+
+### ① `mop` 的 `alreadyMarked` 漏了 `MopPlacer`，而且顶层聚合恒为 0
+
+**症状**（0.93.6，`cell=152161`，0.035kg 脏水）：真标记一格 `marked=1`、`mopPlacerPresent` 由 0→1，
+紧接着再 `dryRun` 同格仍返回 `alreadyMarked:0 / wouldMark:1`。
+⇒ 调用方按 `alreadyMarked` 做幂等会**重复下发**同一个拖地任务。
+
+**根因是两处**，只改一处不够：
+1. `Resolve()` 的 mop 分支写的是 `AlreadyMarked = hasChore`（只认 chore）。拖地是两阶段的：
+   **`MopPlacer` 先落层，小人接活后才出现 chore** ⇒ 只认 chore 就看不见"已经标了"。
+   修：`alreadyMarked = HasMopChore(cell,worldId) || MopPlacerPresent(cell)`，`alreadyReason` 区分三种来源。
+2. （隐蔽）`Execute()` 里 `already` 只在**非工具类型**的逐目标循环里 `already++`；
+   `attack`/`mop` 是"一次工具调用完成全部"、**不进那个循环** ⇒ 工具型两条路径的顶层 `alreadyMarked` **恒为 0**。
+   这正是 0.93.7 首验时"逐条对了、顶层还是 0"的原因。修：工具型在 `Resolve` 之后单独汇总一次。
+
+**顺带把 `mop` 的判据从"推断串"换成真实 choreType**：
+原来对 `choreType.Id` 做 `IndexOf("Mop")`（注释自己写着是"从 `阿玛里=Mop` 推断的"）；
+现在取游戏自己的表 **`Db.Get().ChoreTypes.Mop`**（引用比较优先、`Id` 相等兜底），
+并在 `mopGating.choreTypeId` 回显它的 `Id`（取不到给 `null`，不猜）。
+`【实测 2026-11-17 · U59-744825-SCRPA】` 该值 = **`"Mop"`** —— 值与原推断一致，但现在是引用，不是猜测。
+同一判据用于 `list[].mopChoreFound` 与 `list[].mopMinionChores`。
+
+**在线验收（0.93.8，同一格连发四次）**
+
+| 请求 | `targets` | `alreadyMarked` | `wouldMark` | `marked` | `jobState` |
+|---|---|---|---|---|---|
+| A 标记前 `dryRun` | 1 | 0 | 1 | — | `dry-run` |
+| B `confirm:true` | 1 | 0 | — | 1 | `marked` |
+| C **标记后 `dryRun`** | 1 | **1** | **0** | — | `dry-run` |
+| D 再 `confirm:true` | 1 | 1 | — | **0** | **`already-marked`** |
+
+C 的 `list[0]`：`alreadyMarked=true`、`alreadyReason="该格已有 MopPlacer 标记"`、
+`extra="liquidMassKg=0.035; onFloor=1; maxMopAmt=150; mopChoreFound=0; mopPlacerPresent=1"`。
+
+> 旧注释说"`MopPlacer` 松手即被消费、不能当判据"——那是**拖拽工具**路径的临时预览物。
+> 本插件走 `Util.KInstantiate` 预制体 + 写 `Grid.Objects[cell, MopPlacer]`，实测标记物留到被拖掉
+> （22:07 标上 → 22:09 复测仍在 → 重装 0.93.8 后复测仍成立）。
+
+### ② `/v1/saves` 只扫本地，`count` 看着像全量
+
+**症状**：`scope:"local-only(cloud_save_files 未扫)"`、`count=1`；而 `cloud_save_files\76561198174293646\` 下还有 7 个档
+—— 包括主菜单「继续游戏」实际加载的那个「第七次重启」。**我自己就被这条误导了一轮**（以为机器上只有一个档）。
+
+**选择**：补扫，而不是只把 `scope` 写清楚。理由：这个端点的用途是"让调用方知道能加载哪些档"，
+而"继续游戏"本身就能加载云端档 ⇒ 只报本地等于**给出一个会误导决策的不完整答案**，
+把 `scope` 写准只是把坑标注出来，坑还在。
+
+**改法**：本地 `save_files` + 云 `cloud_save_files`（`<steamId>/<殖民地名>/*.sav`）两个根都扫；
+每条加 `source`（`local`/`cloud`）与 `saveDir`（所属根）；新增 `roots{local,cloud,cloudExists}`、
+`counts{local,cloud}`，`count` = 两者之和；按 `savedAt` 倒序。
+`scope` 如实三态：`local+cloud` / `local-only(找不到 cloud_save_files：<路径>)` / `local-only(cloud_save_files 枚举失败：<原因>)`
+（枚举失败另有 `cloudError`）——**不冒充全量**。
+
+**在线验收（0.93.8）**：`count=8`、`scope="local+cloud"`、`counts={"local":1,"cloud":7}`、`cloudExists=true`、无 `cloudError`。
+
+### 版本说明：为什么不是 0.93.7
+0.93.7 是"只改逐目标判据"的中间构建，装上机验出**顶层聚合仍为 0**（即上面根因 2）。
+那个构建已经装过机、跑过；按"任何字节改动都要升版本（否则装机后无法判断跑的是哪份）"，
+把已跑的中间态与修好的构建区分开 ⇒ 交付版 **0.93.8 / M6.92**。
+
+### 改动文件
+`src/OniAiBridge/JobMarks.cs`（mop 判据 + 聚合 + 真实 choreType）、`src/OniAiBridge/Saves.cs`（双根扫描）、
+`src/OniAiBridge/Bridge.cs`、`src/OniAiBridge/OniAiBridge.csproj`、`mod/mod_info.yaml`（版本号）、
+`docs/API.md`（3.22 与新增 3.37.13）、本文件。
+
+---
+
 ## [修正] 0.93.6 / M6.90 —— `type=capture` 并不"未实现"：删掉不可达的拒绝分支 + 补回读字段 + 更正过时文档（2026-11-17）
 
 ### ① 起点：那句"暂未实现"其实永远执行不到

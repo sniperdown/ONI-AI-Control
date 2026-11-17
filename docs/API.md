@@ -1049,23 +1049,32 @@ POST {"type":"build","prefabId":"Tile","x":100,"y":30,"validateOnly":true}
 ### 3.22 `GET /v1/saves`（M6.17，只读）
 
 ```json
-{"root":"C:\\Users\\…\\save_files\\","scope":"local-only(cloud_save_files 未扫)",
- "count":1,
- "saves":[{"file":"外世/完美.sav","fileName":"完美.sav",
+{"root":"C:\\Users\\…\\save_files\\",
+ "roots":{"local":"C:\\Users\\…\\save_files\\","cloud":"C:\\Users\\…\\cloud_save_files\\","cloudExists":true},
+ "scope":"local+cloud","count":8,"counts":{"local":1,"cloud":7},
+ "saves":[{"file":"76561198174293646/第七次重启/第七次重启.sav","fileName":"第七次重启.sav",
+           "source":"cloud","saveDir":"C:\\Users\\…\\cloud_save_files\\",
            "colony":null,"cycle":null,"dups":null,
            "colonyInfoUnavailable":"未解析存档头（.sav 二进制）；如需殖民地名/周期请后续版本加 LoadHeader",
            "isAutoSave":false,"clusterId":null,
+           "savedAt":"2026-11-15 21:31:26","sizeBytes":1379194},
+          {"file":"外世/完美.sav","fileName":"完美.sav","source":"local","saveDir":"…\\save_files\\",
+           "colony":null,"cycle":null,"dups":null,"isAutoSave":false,
            "savedAt":"2026-11-14 21:59:07","sizeBytes":75093727}]}
 ```
 
 #### 三处如实说明
-1. **只扫本地**：`scope` 明示 `cloud_save_files` 未扫。`【实测 2026-11-15】` 游戏"加载游戏"列表显示 3 个，
-   本端点只返回 1 个（本地那个）—— **别把 `count` 当成"玩家有这么多存档"**；
+1. **两个根都扫（0.93.8 起）**：本地 `save_files` + 云 `cloud_save_files`（布局 `cloud_save_files\<steamId>\<殖民地名>\*.sav`）。
+   每条带 `source`（`local`/`cloud`）与 `saveDir`（它所属的根），`count` 是两者之和、`counts` 分列。
+   `scope` 如实写：两处都扫到 ⇒ `local+cloud`；云目录不存在或枚举失败 ⇒ `local-only(<原因>)`（**不冒充全量**，另有 `cloudError`）。
+   `【实测 2026-11-17】` 本地 1 个 + 云端 7 个 ⇒ `count=8`。
+   ⚠️ **0.93.6 及以前只扫本地**（`scope:"local-only(cloud_save_files 未扫)"`）：那天主菜单「继续游戏」加载的
+   恰恰是云端那个「第七次重启」，只看这个端点会以为"机器上只有一个档" —— 所以 0.93.8 补齐。
 2. **`colony` / `cycle` / `dups` 恒为 `null`**：解析存档头需要 `SaveLoader.LoadHeader(string, ref Header)`，
    而 `Header` 的类型归属在元数据 dump 里不可信（见 DESIGN §10.6ai），**不猜字段名**；
    原因写在每条记录的 `colonyInfoUnavailable` 里；
-3. **`file` vs `fileName`**：`file` 是**相对存档根**的路径（`外世/完美.sav`，用于 `/v1/save/load`），
-   `fileName` 是纯文件名（`完美.sav`）。
+3. **`file` vs `fileName`**：`file` 是**相对它所属根目录**的路径（云端那条就以 `76561198…/` 开头），
+   配 `source` / `saveDir` 一起看；`fileName` 是纯文件名。排序按 `savedAt` 倒序（新的在前）。
 
 ---
 
@@ -2137,7 +2146,7 @@ POST /v1/job
 | `empty_pipe` | L344 | 逐格扫全层，取 `EmptyConduitWorkable`；**幂等回读不可用**（无公开标记位）⇒ 该目标带 `extra.alreadyMarkedUnavailable=1`，`alreadyMarked` 一律 false |
 | `capture` | L360 | 逐格扫全层，取 `Capturable`；`alreadyMarked` = `Capturable.IsMarkedForCapture`（public） |
 | `attack` | L377 | 逐格扫全层，取 `AttackableBase`（`FactionAlignment.attackable` 是 nonpub，故用组件存在性判）；`extra.hp` = `Health.hitPoints` |
-| `mop` | L288 | 逐格判 `Grid.Element[cell].IsLiquid && Grid.Mass[cell] > 0`；`alreadyMarked` = `Grid.Objects[cell, ObjectLayer.MopPlacer] != null`；`extra.liquidMassKg` |
+| `mop` | L288 | 逐格判 `Grid.Element[cell].IsLiquid && Grid.Mass[cell] > 0` + `Grid.Solid[cell 下方]` + `mass <= MopTool.maxMopAmt`；**0.93.8 起** `alreadyMarked` = `HasMopChore(cell,worldId)` **或** `Grid.Objects[cell, ObjectLayer.MopPlacer] != null`（两者任一即已标记，见 3.37.13）；`extra.liquidMassKg` |
 
 #### 3.37.4 执行细节（真做路径）
 * **attack**：不逐目标调 —— 用解析出的目标包围盒调 **`AttackTool.MarkForAttack(v0, v1, false)`**（游戏自己的范围实现，`JobMarks.cs:408`）；
@@ -2292,13 +2301,63 @@ AttackTool.MarkForAttack(new Vector2(p0.x,p0.y), new Vector2(p1.x,p1.y), false)
 | 回读字段 | `mopPlacerPresent` | **`mopChoreFound`**（新增，dryRun 与真做都给） |
 | `mopPlacerPresent` | 参与计数 | **只作临时观察**（`extra` 里注明 `_observationalOnly`，不参与 `marked`/`alreadyMarked`） |
 
-**`HasMopChore` 判据**（`JobMarks.cs` L595）：
+**`HasMopChore` 判据**（`JobMarks.cs`）：
 逐层扫 `Grid.Objects[cell, layer]` → 取对象上的 **`ChoreProvider`** →
-在 `choreWorldMap[worldId]` 里找 **`choreType.Id` 含 `"Mop"`** 的 chore。
+在 `choreWorldMap[worldId]` 里找 **choreType 就是 Mop** 的 chore（判据见 3.37.13）。
 与 `HasAttackChore` 同一手法（`choreWorldMap` 是 public 字段）。
 
-没出现 Mop chore 时：`failedDetails` 追加一条
-`"cell N 实例化了 MopPlacer，但回读没有 Mop chore（未真正排上工作）"`，`failed` 计数。
+> ⚠️ 上面这一整节是 **0.92.3 的历史**。其中"`alreadyMarked` 只看 chore"和"按 `choreType.Id` 含 `"Mop"` 匹配"
+> 都已被 **0.93.8** 取代 —— 见下面 3.37.13。
+> （另：0.92.3 那条"没出现 Mop chore ⇒ 记 `failed`"早在 M6.83 就改掉了：真做只按 `MopPlacerPresent` 判成败，
+> `mopChoreFound` 只作观察。`【实测 2026-11-17】` 真标一格 = `marked=1 failed=0 mopChoreFound=false`。）
+
+### 3.37.13 0.93.8：`mop` 的 `alreadyMarked` 补回 `MopPlacer` + 判据换成真实 choreType
+
+#### ① 症状（0.93.6，实测 cell=152161）
+真标记一格（`marked=1`，`mopPlacerPresent` 已 `true`），紧接着再 `dryRun` 同格：
+`alreadyMarked:0`、`wouldMark:1`、`extra` 里却写着 `mopPlacerPresent=1`。⇒ 调用方按 `alreadyMarked` 做幂等会**重复下发**。
+
+根因是**两处**，缺一不可修：
+
+| # | 位置 | 问题 |
+|---|---|---|
+| a | `Resolve()` 的 mop 分支 | `AlreadyMarked = hasChore` —— 只认 chore，漏了 `MopPlacer` 标记物。而拖地这件事是两阶段的：**标记物先落层，小人接活后才出现 chore** |
+| b | `Execute()` 的顶层聚合 | `already` 只在"非工具类型"的逐目标循环里 `already++`；`attack`/`mop` 是"一次工具调用完成全部"**不进那个循环** ⇒ 工具型两条路径的顶层 `alreadyMarked` **恒为 0**（`wouldMark` 因此恒等于 `targets`） |
+
+#### ② 0.93.8 的判据
+```json
+"alreadyMarked": 1, "wouldMark": 0,
+"list":[{"alreadyMarked":true,"alreadyReason":"该格已有 MopPlacer 标记",
+         "extra":"…; mopChoreFound=0; mopPlacerPresent=1"}]
+```
+* 逐目标 `alreadyMarked` = **`HasMopChore(cell,worldId)` 或 `MopPlacerPresent(cell)`**；
+  `alreadyReason` 三种取值：`该格已有 Mop chore` / `该格已有 MopPlacer 标记` / `该格已有 Mop chore + MopPlacer 标记`；
+* 顶层 `alreadyMarked` = 逐目标汇总（工具型两条路径也汇总）；`wouldMark = targets - alreadyMarked`；
+* 真做时 `ApplyMop` 对 `AlreadyMarked` 的目标**直接跳过** ⇒ 重复 `confirm` 返回
+  `marked:0, jobState:"already-marked"`，**不会重复下发**；
+* `extra` 里的 `mopPlacerPresent=0/1` 不再带 `_observationalOnly` 后缀 —— 它现在**是判据之一**。
+
+> 关于"`MopPlacer` 松手即被消费"那条旧注释：说的是**拖拽工具**路径的临时预览物。
+> 本插件走的是直接 `Util.KInstantiate` 预制体再写 `Grid.Objects[cell, MopPlacer]`，实测标记物会**留到被拖掉**
+> （`【实测 2026-11-17】` 22:07 标上 → 22:09 复测仍在 → 重装 0.93.8 后复测仍成立）。
+
+#### ③ 判据不再用"字符串含 Mop"的推断
+```json
+"mopGating":{"maxMopAmt":150,"liquidCells":1,"skippedTooMuch":0,"skippedNotOnFloor":0,"choreTypeId":"Mop"}
+```
+* 判据取**游戏自己的表**：`Db.Get().ChoreTypes.Mop`（引用比较优先，`Id` 相等兜底），
+  不再对 `choreType.Id` 做 `IndexOf("Mop")` —— 原注释自己写着那是"从 `阿玛里=Mop` 推断的"；
+* `mopGating.choreTypeId` 回显这个单例的 `Id`（取不到就是 `null`，**不猜**）；
+  `【实测 2026-11-17 · U59-744825-SCRPA】` = **`"Mop"`**（值上与原推断一致，但现在是引用而非猜测）；
+* 同一判据用于 `list[].mopChoreFound` 与 `list[].mopMinionChores`。
+
+#### ④ 在线验收（0.93.8，同一格连发四次）
+| 请求 | `targets` | `alreadyMarked` | `wouldMark` | `marked` | `jobState` |
+|---|---|---|---|---|---|
+| A 标记前 `dryRun` | 1 | 0 | 1 | — | `dry-run` |
+| B `confirm:true` | 1 | 0 | — | 1 | `marked` |
+| C **标记后 `dryRun`** | 1 | **1** | **0** | — | `dry-run` |
+| D 再 `confirm:true` | 1 | 1 | — | **0** | **`already-marked`** |
 
 #### 3.37.10 `dryRun` 也返回 `attackBBox` / `attackMarkedCount`（M6.79）
 0.92.2 的 dryRun：`attackBBox: null`、`attackMarkedCount: -1` —— 两边不一致，调用方没法"先看盒子再决定"。

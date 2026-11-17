@@ -111,6 +111,18 @@ namespace OniAiBridge
 
                     int marked = 0, already = 0, failed = 0, prioApplied = 0;
 
+                    // ★ 0.93.7 修：`alreadyMarked` 的**顶层聚合**必须对所有类型都算。
+                    //   attack / mop 是"一次工具调用完成全部"，不进下面 `if (!dryRun)` 里的逐目标循环
+                    //   ⇒ 原来只有 disinfect/empty_pipe/capture 会在那个循环里 `already++`，
+                    //   工具型两条路径的 `alreadyMarked` **恒为 0**（mop 的 `wouldMark` 因此恒等于 targets）。
+                    //   逐目标的 `alreadyMarked` 是 Resolve 填的，这里只做汇总。
+                    //   非工具类型不能在这里算（否则与下面的循环重复计数），所以按类型分流。
+                    if (type == T_ATTACK || type == T_MOP)
+                    {
+                        for (int i3 = 0; i3 < targets.Count; i3++)
+                            if (targets[i3].AlreadyMarked) already++;
+                    }
+
                     string attackBBox = null;
                     int attackMarkedCount = -1;   // 仅 attack：回读到的已标记数
                     int choreObservedImmediately = -1;   // attack：同帧回读到的 chore 数（可能为 0，不代表失败）
@@ -248,7 +260,10 @@ namespace OniAiBridge
                     if (type == T_MOP) sb.Append(",\"mopGating\":{\"maxMopAmt\":").Append(F(MopMaxAmt()))
                         .Append(",\"liquidCells\":").Append(mopLiquidCells)
                         .Append(",\"skippedTooMuch\":").Append(mopTooMuch)
-                        .Append(",\"skippedNotOnFloor\":").Append(mopNotOnFloor).Append('}');
+                        .Append(",\"skippedNotOnFloor\":").Append(mopNotOnFloor)
+                        // ★ 0.93.7：判据用的**真实** choreType（取自 `Db.Get().ChoreTypes.Mop`），
+                        //   回显它的 `Id` 供外部核对；取不到就是 null（不再用"含 Mop"的推断串）。
+                        .Append(",\"choreTypeId\":").Append(Snap.Str(MopChoreTypeId())).Append('}');
                     if (type == T_ATTACK) sb.Append(",\"attackMarkedCount\":").Append(attackMarkedCount);
                     if (type == T_ATTACK) sb.Append(",\"choreObservedImmediately\":").Append(choreObservedImmediately);
                     if (type == T_CAPTURE) sb.Append(",\"captureMarkedCount\":").Append(captureMarkedCount);
@@ -301,9 +316,12 @@ namespace OniAiBridge
                     sb.Append(']');
                     if (targets.Count > lim) sb.Append(",\"listTruncated\":true");
                     sb.Append(",\"note\":").Append(Snap.Str(
-                        "打标记批次（0.93.6）。`dryRun` 与真做共用同一段解析（Resolve）。"
+                        "打标记批次（0.93.7）。`dryRun` 与真做共用同一段解析（Resolve）。"
                         + "`attack`/`mop` 是**一次工具调用完成全部**，不进逐目标循环 ⇒ `marked` 只有 0 或 1，`failed` 只在工具调用真抛异常时 +1。"
-                        + "`attackMarked` = 该对象身上是否已有 Attack chore（回读判据）；`mopPlacerPresent` = 该格 `ObjectLayer.MopPlacer` 是否有对象。"
+                        + "`attackMarked` = 该对象身上是否已有 Attack chore（回读判据）。"
+                        + "**`mop` 的幂等判据（0.93.7 修正）**：`alreadyMarked` = 该格已有 Mop chore **或** 已有 `ObjectLayer.MopPlacer` 标记物"
+                        + "——两者是同一件事的两个阶段（标记物先落层，小人接活后才出现 chore），任一存在即算已标记 ⇒ 第二次 `dryRun` 给"
+                        + "`alreadyMarked:1 / wouldMark:0`。`mopGating.choreTypeId` 是判据用的真实 choreType Id（取自 `Db.Get().ChoreTypes.Mop`）。"
                         + "`capture` 走 `Capturable.MarkForCapture(bool)`，逐目标调；`marked` 是**尝试数**，"
                         + "`captureMarkedCount` 才是**游戏侧回读**到的已标记数（`IsMarkedForCapture`，同帧可靠）—— 两者不等说明游戏拒了（多半 `IsCapturable()` 为假）。"
                         + "attack 会**真的伤害小动物**，请先 dryRun 看 list。"));
@@ -370,18 +388,29 @@ namespace OniAiBridge
 
                         bool hasChore = HasMopChore(cell, w);
                         bool placerNow = MopPlacerPresent(cell);
+                        // ★ 0.93.7 修：`alreadyMarked` 必须把 **MopPlacer 标记物**也算进来。
+                        //   0.93.6 只认 chore ⇒ 真标记之后（marked=1、mopPlacerPresent 已 true）再 dryRun，
+                        //   仍报 alreadyMarked=0 / wouldMark=1，调用方按它做幂等会**重复下发**同一个拖地任务
+                        //   （实测 cell=152161）。标记物与 chore 是"同一件事的两个阶段"：标记物先落层，
+                        //   小人接活后才出现 chore ⇒ 两者任一存在都表示"这格已经被标了"。
+                        //   注：下方 `HasMopChore` 的旧注释说"MopPlacer 松手即被消费"，那是**拖拽工具**路径的
+                        //   临时预览物；本插件走的是直接实例化预制体写入 ObjectLayer.MopPlacer，实测会留到被拖掉
+                        //   （22:07 标上 → 22:09 复测仍在），所以这里可以当判据。
+                        bool already = hasChore || placerNow;
                         outList.Add(new Target
                         {
                             Kind = "cell",
                             PrefabId = null,
                             Cell = cell, X = xx, Y = yy, WorldId = w,
                             InstanceId = cell,
-                            AlreadyMarked = hasChore,
-                            AlreadyReason = hasChore ? "该格已有 Mop chore" : null,
+                            AlreadyMarked = already,
+                            AlreadyReason = (hasChore && placerNow) ? "该格已有 Mop chore + MopPlacer 标记"
+                                          : (hasChore ? "该格已有 Mop chore"
+                                                      : (placerNow ? "该格已有 MopPlacer 标记" : null)),
                             Extra = "liquidMassKg=" + m.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
                                     + "; onFloor=1; maxMopAmt=" + maxAmt.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
                                     + "; mopChoreFound=" + (hasChore ? "1" : "0")
-                                    + "; mopPlacerPresent=" + (placerNow ? "1" : "0") + "_observationalOnly"
+                                    + "; mopPlacerPresent=" + (placerNow ? "1" : "0")
                         });
                         continue;
                     }
@@ -652,14 +681,41 @@ namespace OniAiBridge
         /// `Chore.choreType.Id` / `Chore.gameObject` 都是 public。
         /// </summary>
         /// <summary>
-        /// `mop` 的回读判据：该格是否存在 **Mop 类 chore**。
-        /// `MopPlacer` 只是拖拽期间的临时标记物（松手即被消费），**不能当最终状态**——
-        /// 0.92.2 拿它当判据 ⇒ "做的时候 true、一秒后 false"。
-        /// 与 `HasAttackChore` 同一手法：`ChoreProvider.choreWorldMap` 是 public 字段。
+        /// `mop` 判据用的**真实** `ChoreType` —— 直接取游戏自己的表 `Db.Get().ChoreTypes.Mop`。
+        /// ★ 0.93.7：原来靠 `choreType.Id` 里含 "Mop" 这个**推断串**判断（从实测文本 `阿玛里=Mop` 倒推的），
+        ///   现在改成引用游戏表里那个单例；字符串只剩 `Id` 属性的回显（响应里的 `mopGating.choreTypeId`），
+        ///   不再参与判定。取不到时返回 null，调用方**如实报 null，不许退回去猜**。
         /// </summary>
+        static ChoreType MopChoreType()
+        {
+            try
+            {
+                var db = Db.Get();
+                if (db == null) return null;
+                return db.ChoreTypes != null ? db.ChoreTypes.Mop : null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Mop choreType 的真实 `Id`（给响应回显用）；取不到就是 null。</summary>
+        static string MopChoreTypeId()
+        {
+            try { var t = MopChoreType(); return t != null ? t.Id : null; } catch { return null; }
+        }
+
+        /// <summary>某个 choreType 是不是 Mop（引用比较优先，Id 相等兜底）。</summary>
+        static bool IsMopChoreType(ChoreType ct)
+        {
+            if (ct == null) return false;
+            var want = MopChoreType();
+            if (want == null) return false;
+            if (object.ReferenceEquals(ct, want)) return true;
+            try { return string.Equals(ct.Id, want.Id, System.StringComparison.Ordinal); } catch { return false; }
+        }
+
         /// <summary>
         /// 统计**小人身上**的 Mop chore 数量（拖地 chore 挂在接活的小人身上，不在那格的物体上）。
-        /// 依据：`Components.LiveMinionIdentities` → `ChoreDriver.GetCurrentChore()` → `chore.choreType.Id`。
+        /// 依据：`Components.LiveMinionIdentities` → `ChoreDriver.GetCurrentChore()` → `chore.choreType`。
         /// </summary>
         static int CountMopChoresOnMinions()
         {
@@ -673,10 +729,8 @@ namespace OniAiBridge
                     if (mi == null) continue;
                     var cd = mi.GetComponent<ChoreDriver>();
                     var chore = cd != null ? cd.GetCurrentChore() : null;
-                    if (chore == null || chore.choreType == null) continue;
-                    string id = null;
-                    try { id = chore.choreType.Id; } catch { }
-                    if (id != null && id.IndexOf("Mop", System.StringComparison.OrdinalIgnoreCase) >= 0) n++;
+                    if (chore == null) continue;
+                    if (IsMopChoreType(chore.choreType)) n++;
                 }
             }
             catch { }
@@ -700,10 +754,8 @@ namespace OniAiBridge
                     for (int i = 0; i < list.Count; i++)
                     {
                         var c = list[i];
-                        if (c == null || c.choreType == null) continue;
-                        string id = null;
-                        try { id = c.choreType.Id; } catch { }
-                        if (id != null && id.IndexOf("Mop", System.StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                        if (c == null) continue;
+                        if (IsMopChoreType(c.choreType)) return true;
                     }
                 }
             }

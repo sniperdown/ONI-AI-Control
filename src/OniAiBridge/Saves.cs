@@ -44,6 +44,50 @@ namespace OniAiBridge
             return s.Replace('\\', '/');
         }
 
+        /// <summary>
+        /// 云存档根目录（含结尾分隔符）：与本地 <c>save_files</c> **同级**，即 Klei 目录下的
+        /// <c>cloud_save_files</c>。实测布局：<c>cloud_save_files\&lt;steamId&gt;\&lt;殖民地名&gt;\*.sav</c>。
+        /// </summary>
+        static string CloudRoot(string localRoot)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(localRoot)) return null;
+                string trimmed = localRoot.TrimEnd('\\', '/');
+                var parent = System.IO.Directory.GetParent(trimmed);
+                if (parent == null) return null;
+                return System.IO.Path.Combine(parent.FullName, "cloud_save_files") + System.IO.Path.DirectorySeparatorChar;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>一条存档记录（本地 / 云两个根共用同一套输出逻辑）。</summary>
+        sealed class Entry
+        {
+            public string Base;      // 所属根目录（绝对路径，含结尾分隔符）
+            public string Source;    // "local" | "cloud"
+            public string Rel;       // 相对 Base 的路径（/ 分隔）
+            public string FileName;
+            public long Size = -1;
+            public System.DateTime SavedAt;
+            public bool IsAuto;
+        }
+
+        static void AddEntries(System.Collections.Generic.List<Entry> into, string[] files, string baseDir, string source)
+        {
+            if (files == null) return;
+            for (int i = 0; i < files.Length; i++)
+            {
+                string full = files[i];
+                if (string.IsNullOrEmpty(full)) continue;
+                var e = new Entry { Base = baseDir, Source = source, Rel = Rel(full, baseDir) };
+                try { e.FileName = System.IO.Path.GetFileName(full); } catch { }
+                try { var fi = new System.IO.FileInfo(full); e.Size = fi.Length; e.SavedAt = fi.LastWriteTime; } catch { }
+                try { e.IsAuto = e.FileName != null && e.FileName.StartsWith("autosave", System.StringComparison.OrdinalIgnoreCase); } catch { }
+                into.Add(e);
+            }
+        }
+
         public static string List(out int status, out string code, out string message)
         {
             status = 200; code = null; message = null;
@@ -58,57 +102,92 @@ namespace OniAiBridge
             // ⚠️ 不用 SaveLoader.GetSaveFiles：它返回的 SaveFileEntry 形状在元数据 dump 里被"平铺"过（§10.6aa），
             //    headerData / Header 的类型归属不可信，编译已证明 dump 说的字段不存在。
             //    这里改用纯文件系统枚举 —— 确定、无 Unity 依赖，且"存档文件"本来就是磁盘上的东西。
-            string[] files = null;
+            string[] localFiles = null;
             string err = null;
-            try { files = System.IO.Directory.GetFiles(root, "*" + SaveLoader.SAVE_EXTENSION, System.IO.SearchOption.AllDirectories); }
+            try { localFiles = System.IO.Directory.GetFiles(root, "*" + SaveLoader.SAVE_EXTENSION, System.IO.SearchOption.AllDirectories); }
             catch (System.Exception e) { err = e.GetType().Name + ": " + e.Message; }
 
-            if (files == null)
+            if (localFiles == null)
             {
-                status = 500; code = "INTERNAL"; message = "枚举存档目录失败：" + (err ?? "返回 null");
+                status = 500; code = "INTERNAL"; message = "枚举本地存档目录失败：" + (err ?? "返回 null");
                 return null;
             }
 
-            var sb = new StringBuilder(2048);
-            sb.Append("{\"root\":").Append(Snap.Str(root));
-            sb.Append(",\"scope\":").Append(Snap.Str("local-only(cloud_save_files 未扫)"));
-            sb.Append(",\"count\":").Append(files.Length).Append(",\"saves\":[");
-            int emitted = 0;
-            for (int i = 0; i < files.Length; i++)
+            // ★ 0.93.7：**同时扫云存档**。实测（2026-11-17）：主菜单「继续游戏」加载的档就在
+            //   cloud_save_files\<steamId>\<殖民地名>\*.sav 下；只扫本地会让调用方以为"只有一个档"
+            //   （当时本地 1 个、云端 7 个，我自己就被这条误导过一次）。
+            //   ⇒ 两个根都扫，每条标 source / saveDir，scope 如实写；云目录找不到或枚举失败时**明说**，
+            //     不拿"local-only"去冒充全量。
+            string cloudRoot = CloudRoot(root);
+            bool cloudExists = false;
+            try { cloudExists = !string.IsNullOrEmpty(cloudRoot) && System.IO.Directory.Exists(cloudRoot); } catch { }
+            string[] cloudFiles = null;
+            string cloudErr = null;
+            if (cloudExists)
             {
-                string full = files[i];
-                if (string.IsNullOrEmpty(full)) continue;
+                try { cloudFiles = System.IO.Directory.GetFiles(cloudRoot, "*" + SaveLoader.SAVE_EXTENSION, System.IO.SearchOption.AllDirectories); }
+                catch (System.Exception e) { cloudErr = e.GetType().Name + ": " + e.Message; }
+            }
 
-                string rel = Rel(full, root);
-                string fileName = null;
-                try { fileName = System.IO.Path.GetFileName(full); } catch { }
-                long size = -1;
-                System.DateTime savedAt = default(System.DateTime);
-                try { var fi = new System.IO.FileInfo(full); size = fi.Length; savedAt = fi.LastWriteTime; } catch { }
+            string scope;
+            if (!cloudExists)
+                scope = "local-only(找不到 cloud_save_files：" + (cloudRoot ?? "<无法从本地存档根推导>") + ")";
+            else if (cloudFiles == null)
+                scope = "local-only(cloud_save_files 枚举失败：" + (cloudErr ?? "返回 null") + ")";
+            else
+                scope = "local+cloud";
 
-                // 存档头（殖民地名/周期/小人数量）需要解析 .sav 二进制 —— **本版不解**，如实给 null/0
-                bool isAuto = false;
-                try { isAuto = fileName != null && fileName.StartsWith("autosave", System.StringComparison.OrdinalIgnoreCase); } catch { }
+            var all = new System.Collections.Generic.List<Entry>(localFiles.Length + (cloudFiles != null ? cloudFiles.Length : 0));
+            AddEntries(all, localFiles, root, "local");
+            AddEntries(all, cloudFiles, cloudRoot, "cloud");
+            // 新的在前；时间相同按 source|rel 排，保证每次输出稳定
+            all.Sort(delegate (Entry a, Entry b)
+            {
+                int c = b.SavedAt.CompareTo(a.SavedAt);
+                if (c != 0) return c;
+                return string.CompareOrdinal(a.Source + "|" + a.Rel, b.Source + "|" + b.Rel);
+            });
 
-                if (emitted > 0) sb.Append(',');
-                emitted++;
-                sb.Append("{\"file\":").Append(Snap.Str(rel));
-                sb.Append(",\"fileName\":").Append(Snap.Str(fileName));
+            int nLocal = 0, nCloud = 0;
+            for (int i = 0; i < all.Count; i++) { if (all[i].Source == "cloud") nCloud++; else nLocal++; }
+
+            var sb = new StringBuilder(4096);
+            sb.Append("{\"root\":").Append(Snap.Str(root));
+            sb.Append(",\"roots\":{\"local\":").Append(Snap.Str(root))
+              .Append(",\"cloud\":").Append(Snap.Str(cloudRoot))
+              .Append(",\"cloudExists\":").Append(cloudExists ? "true" : "false").Append('}');
+            sb.Append(",\"scope\":").Append(Snap.Str(scope));
+            sb.Append(",\"count\":").Append(all.Count);
+            sb.Append(",\"counts\":{\"local\":").Append(nLocal).Append(",\"cloud\":").Append(nCloud).Append('}');
+            if (cloudErr != null) sb.Append(",\"cloudError\":").Append(Snap.Str(cloudErr));
+            sb.Append(",\"saves\":[");
+            for (int i = 0; i < all.Count; i++)
+            {
+                var e = all[i];
+                if (i > 0) sb.Append(',');
+                sb.Append("{\"file\":").Append(Snap.Str(e.Rel));
+                sb.Append(",\"fileName\":").Append(Snap.Str(e.FileName));
+                sb.Append(",\"source\":").Append(Snap.Str(e.Source));
+                sb.Append(",\"saveDir\":").Append(Snap.Str(e.Base));
                 sb.Append(",\"colony\":").Append("null");
                 sb.Append(",\"cycle\":").Append("null");
                 sb.Append(",\"dups\":").Append("null");
                 sb.Append(",\"colonyInfoUnavailable\":").Append(Snap.Str("未解析存档头（.sav 二进制）；如需殖民地名/周期请后续版本加 LoadHeader"));
-                sb.Append(",\"isAutoSave\":").Append(isAuto ? "true" : "false");
+                sb.Append(",\"isAutoSave\":").Append(e.IsAuto ? "true" : "false");
                 sb.Append(",\"clusterId\":").Append("null");
-                sb.Append(",\"savedAt\":").Append(Snap.Str(FmtTime(savedAt)));
-                sb.Append(",\"sizeBytes\":").Append(size);
+                sb.Append(",\"savedAt\":").Append(Snap.Str(FmtTime(e.SavedAt)));
+                sb.Append(",\"sizeBytes\":").Append(e.Size);
                 sb.Append('}');
             }
             sb.Append("],\"note\":").Append(Snap.Str(
-                "只扫描本地存档目录（cloud_save_files 未扫）；file 是相对存档根目录的路径，用于 POST /v1/save/load"));
+                "0.93.7 起同时扫两个根：本地 save_files 与云存档 cloud_save_files"
+                + "（每条带 source=local|cloud、saveDir=它所属的根，file 相对该根）。"
+                + "count 是两者之和，counts 分列；scope 如实写 —— 云目录找不到或枚举失败时写 local-only 并说明原因，不冒充全量。"
+                + "云存档路径形如 cloud_save_files/<steamId>/<殖民地名>/*.sav。"
+                + "POST /v1/save/load 目前整体禁用（501 LOAD_PATH_UNSAFE），file 仅作标识用"));
             sb.Append('}');
 
-            Log.Info("[saves] root=" + root + " count=" + emitted);
+            Log.Info("[saves] local=" + root + " localCount=" + nLocal + " cloud=" + cloudRoot + " cloudCount=" + nCloud + " scope=" + scope);
             return sb.ToString();
         }
 

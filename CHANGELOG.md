@@ -1,3 +1,28 @@
+## [修正] 0.95.1 / M7.3 —— `blockingDialog` 加白名单：`ResearchScreen` 不再误报（2026-11-18）
+
+**症状（0.95.0）**：`/v1/meta` 在殖民地刚加载完就报
+`blockingDialog:{"present":true,"screens":["ResearchScreen"]}` —— 但 `ResearchScreen` 只是常驻研究面板，
+根本没挡住输入。判据写的是 `is KModalScreen`，而 **`ResearchScreen` 本身就是 `KModalScreen` 的子类**，
+于是 20 个激活 screen 里随手就命中一个 ⇒ **误报**。误报的代价是 AI 一直以为有东西挡着。
+
+**改法**：判据换成**类名白名单**（元数据：直接继承 `KModalScreen` 且带 confirm/cancel 或"强制确认"语义的那些）：
+
+`ConfirmDialogScreen` / `BarterConfirmationScreen` / `GameOverScreen` / `VictoryScreen` /
+`DLCBetaMessageScreen` / `OldVersionMessageScreen` / `DemoOverScreen` / `PatchNotesScreen`
+
+响应新增 `whitelist` 数组，调用方可以直接核对本版本的判定口径。
+原则：**宁可漏报不要误报** —— 所以 `ResearchScreen` / `SkillsScreen` / `StarmapScreen` / `LoadScreen` 这类常驻面板全部排除。
+
+**实测（0.95.1，Cycle-6 小档）**：加载完殖民地、`/v1/ui` 显示 20 个 screen 激活且 `ResearchScreen` 在列，
+`/v1/meta` 返回 `present:false, count:0, screens:[]` —— 误报消除。
+
+**没验到的**：本轮**没能在线触发**真正的 `ConfirmDialogScreen`（游戏内退出确认被本 mod 的安全名单挡住；
+`LoadScreen`/存档路径会写出带 debug 痕迹的文件）⇒ `present:true` 目前只在代码路径上成立，没有真机样本。
+有人手动弹出确认框时应当立刻变 `present:true`。
+
+**改动文件**：`src/OniAiBridge/Bridge.cs`（白名单常量 + 判据 + `whitelist` 输出）、`docs/API.md`（§3.40 ④）、三处版本号、本文件。
+
+---
 ## [新增] 0.95.0 / M7.2 —— 拆解标记 / 作业目标 / 按坐标截图 / 阻塞对话框（2026-11-18）
 
 四件事都是"让 AI 看得见原本看不见的东西"，全部真机验过。

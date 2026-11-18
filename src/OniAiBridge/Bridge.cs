@@ -16,8 +16,8 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.95.0";
-        public const string Stage = "M7.2";
+        public const string ModVersion = "0.95.1";
+        public const string Stage = "M7.3";
 
         static BridgeSettings settings;
         static TcpListener listener;
@@ -916,8 +916,11 @@ namespace OniAiBridge
               .Append(",\"maxCells\":").Append(MapQuery.MaxCells)
               .Append(",\"channels\":[\"element\",\"temperature\",\"mass\"]}");
             sb.Append(",\"vision\":").Append(Snap.Str(Vision.ModeName));
-            // ★ 0.95.0：阻塞型对话框检测（`KModalScreen` 及其子类，如 ConfirmDialogScreen）。
-            //   **只报告，不自动点掉** —— 自动确认可能误触真正的危险操作，让调用方自己决定。
+            // ★ 0.95.1：阻塞型对话框检测 —— **白名单**，只认"真的挡住输入、必须点掉才能继续"的那类。
+            //   判据是**具体类名**（`KModalScreen` 的子类太多，`ResearchScreen` / `SkillsScreen` / `StarmapScreen`
+            //   这些常驻界面同样是 KModalScreen 子类，但不算阻塞 ⇒ 0.95.0 报出来是误报）。
+            //   宁可漏报不要误报：误报会让 AI 一直以为有东西挡着。
+            //   下列名字来自元数据（直接继承 KModalScreen 的类型里，带 confirm/cancel 或"强制确认"语义的那些）。
             {
                 string blocking = null;
                 bool bRan = MainThread.Ready && MainThread.InvokeAdaptive(() =>
@@ -935,18 +938,21 @@ namespace OniAiBridge
                                 bool act = false;
                                 try { act = s.IsActive(); } catch { }
                                 if (!act) continue;
-                                if (!(s is KModalScreen)) continue;      // 只有模态屏才算"阻塞"
-                                string n = null;
-                                try { n = s.screenName; } catch { }
-                                if (string.IsNullOrEmpty(n)) { try { n = s.gameObject.name; } catch { } }
-                                names.Add(Snap.Str(n ?? "?"));
+                                string tn = null;
+                                try { tn = s.GetType().Name; } catch { }
+                                if (tn == null) continue;
+                                if (System.Array.IndexOf(BlockingScreenNames, tn) < 0) continue;
+                                names.Add(Snap.Str(tn));
                             }
                         }
                         blocking = "{\"present\":" + (names.Count > 0 ? "true" : "false")
                                  + ",\"count\":" + names.Count
                                  + ",\"screens\":[" + string.Join(",", names.ToArray()) + "]"
-                                 + ",\"note\":" + Snap.Str("只报告不自动点掉（自动确认可能误触危险操作）。"
-                                     + "要清掉请自己点：POST /v1/ui/click {\"text\":\"好的\",\"screen\":\"ConfirmDialogScreen\"}")
+                                 + ",\"whitelist\":[" + JoinQuoted(BlockingScreenNames) + "]"
+                                 + ",\"note\":" + Snap.Str("present:true = 有确认/终止类模态框挡着，AI 此时不应假设可以操作世界。"
+                                     + "**只报告不自动点掉**（自动确认可能误触危险操作）；要清掉请自己点，"
+                                     + "例如 POST /v1/ui/click {\"text\":\"好的\",\"screen\":\"ConfirmDialogScreen\"}。"
+                                     + "判据是白名单里的具体类名；ResearchScreen / SkillsScreen / StarmapScreen 这类常驻面板**不算**阻塞。")
                                  + "}";
                     }
                     catch { }
@@ -958,6 +964,31 @@ namespace OniAiBridge
             string __json = sb.ToString();
             JsonCheck.Validate(__json, "meta");   // 手写 JSON ⇒ 出门前必须能解析
             return __json;
+        }
+
+        /// <summary>
+        /// 阻塞型对话框白名单（0.95.1）。只收"真的挡住输入、必须点掉才能继续"的具体类，
+        /// 全部来自元数据（直接继承 `KModalScreen` 且带 confirm/cancel/强制确认语义）。
+        /// **刻意不含** ResearchScreen / SkillsScreen / StarmapScreen / LoadScreen 这类常驻面板 ——
+        /// 它们也是 KModalScreen 子类，但开着不代表"被挡住"。
+        /// </summary>
+        static readonly string[] BlockingScreenNames = {
+            "ConfirmDialogScreen",        // 通用确认框（confirmButton / cancelButton）
+            "BarterConfirmationScreen",   // 交易确认
+            "GameOverScreen",             // 全灭
+            "VictoryScreen",              // 胜利结算
+            "DLCBetaMessageScreen",       // DLC 测试期提示
+            "OldVersionMessageScreen",    // 旧版本提示
+            "DemoOverScreen",             // 试玩结束
+            "PatchNotesScreen"            // 更新后补丁说明（要按 OK 才继续）
+        };
+
+        static string JoinQuoted(string[] arr)
+        {
+            if (arr == null || arr.Length == 0) return "";
+            var parts = new string[arr.Length];
+            for (int i = 0; i < arr.Length; i++) parts[i] = Snap.Str(arr[i]);
+            return string.Join(",", parts);
         }
 
         /// <summary>从 "U59-744825-S" 里取 build 数字（最长的一段连续数字）。</summary>

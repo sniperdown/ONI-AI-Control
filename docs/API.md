@@ -1188,13 +1188,32 @@ GET /v1/shot?w=800&h=450&centerX=117&centerY=217
 "blockingDialog":{"present":true,"count":1,"screens":["ResearchScreen"],
                    "note":"只报告不自动点掉（自动确认可能误触危险操作）…"}
 ```
-判据：激活的 **`KScreen` 中属于 `KModalScreen` 及其子类**（`ConfirmDialogScreen` 就是其中之一）。
+**判据 = 白名单（0.95.1 起）**：只认下表这些**具体类名**（全部来自元数据：直接继承 `KModalScreen` 且带
+confirm/cancel 或"强制确认"语义）。反序列化后逐条给出 `whitelist` 数组，便于调用方核对版本。
+
+| 类名 | 用途 |
+|---|---|
+| `ConfirmDialogScreen` | 通用确认框（`confirmButton` / `cancelButton`） |
+| `BarterConfirmationScreen` | 交易确认 |
+| `GameOverScreen` | 全灭结算 |
+| `VictoryScreen` | 胜利结算 |
+| `DLCBetaMessageScreen` | DLC 测试期提示 |
+| `OldVersionMessageScreen` | 旧版本提示 |
+| `DemoOverScreen` | 试玩结束 |
+| `PatchNotesScreen` | 更新后补丁说明（要按 OK 才继续） |
+
+**刻意不含** `ResearchScreen` / `SkillsScreen` / `StarmapScreen` / `LoadScreen` 这类常驻面板 ——
+它们同样是 `KModalScreen` 子类，但开着不代表"被挡住"。
+0.95.0 曾用 `is KModalScreen` 判断，结果殖民地一加载就报 `ResearchScreen` ⇒ **误报**；
+0.95.1 改成白名单后 `【实测 2026-11-18】` 同一场景（20 个 screen 激活、`ResearchScreen` 在其中）返回
+`present:false, count:0`。
+
 **不自动点掉**是有意的 —— 自动确认可能误触真正的危险操作；要清掉由调用方自己决定，例如
 `POST /v1/ui/click {"text":"好的","screen":"ConfirmDialogScreen"}`（已实测可点掉）。
 
-⚠️ 语义要说清：`present:true` 表示"有模态屏开着"，**不等于"必须点掉的确认框"** ——
-`ResearchScreen` 也是 `KModalScreen` 子类，实测在殖民地加载后就会被报出来。
-调用方应先看 `screens` 里的名字再决定。
+⚠️ 还剩的验证缺口：本轮**没能在线触发**一个真正的 `ConfirmDialogScreen`（退出到主菜单被本 mod 的安全名单挡住、
+存档又会写出带 debug 痕迹的文件），所以 `present:true` 只在代码路径上成立，尚未拿到真机样本。
+一旦有人手动弹出确认框（例如游戏内菜单里的退出确认），`/v1/meta` 应立刻变成 `present:true`。
 ### 3.22 `GET /v1/saves`（M6.17，只读）
 
 ```json

@@ -301,6 +301,84 @@ curl -s -X POST -H "X-Oni-Token: $ONI_TOKEN" -H 'Content-Type: application/json'
 * `teleport` 用 `Transform` 定位（游戏没有"接受坐标的传送 API"），执行后立即回读 `Grid.PosToCell`；
   导航系统之后仍可能拉回，**请隔 1 秒用 `/v1/state` 复查 `cell`**。
 
+### `pipeLink`：连接 / 切断一格管线或电线（0.94.7 起，精确单方向）
+
+```bash
+curl -s -X POST -H "X-Oni-Token: $ONI_TOKEN" -H 'Content-Type: application/json' \
+     -d '{"op":"pipeLink","x":117,"y":217,"dir":"right","connect":false}' \
+     http://127.0.0.1:8770/v1/command
+```
+
+参数：`x` / `y`（整格坐标）、`dir`（`left|right|up|down`）、`connect`（`true`=连 / `false`=断）、
+可选 `layer`（`gasConduit|liquidConduit|solidConduit|wire`，本格有多个可连层时必须给）、
+可选 `dryRun:true`（**纯读**，不改状态，用来事后复读）。
+
+响应（节选）：
+```json
+{"op":"pipeLink","cell":138129,"layer":"wire","prefabId":"Wire","dir":"Right",
+ "connectRequested":false,"alreadyInRequestedState":false,
+ "via":"DisconnectTool.DisconnectCellsAction(cell, go, IHaveUtilityNetworkMgr, Right) [reflection]",
+ "before":{"getter":3,"array":3,"networkId":0},
+ "expectedGetter":1,
+ "after":{"getter":1,"array":1,"networkId":0},
+ "applied":true,"inconsistent":false}
+```
+
+#### 实现路径（两条，2026-11-18 真机验过）
+| 动作 | 调用 | 说明 |
+|---|---|---|
+| **连** | `IUtilityNetworkMgr.AddConnection(UtilityConnections, int32 cell, bool isVirtual)` | public 接口方法，只**加**不减 |
+| **断** | **反射** `DisconnectTool.DisconnectCellsAction(int32 cell, GameObject go, IHaveUtilityNetworkMgr mgr, UtilityConnections connections)` | `private` / **`instance`**；实例取 **`public static` 字段 `DisconnectTool.Instance`** |
+
+两者都只动**单方向**（`UtilityConnections.Left=1 / Right=2 / Up=4 / Down=8`）。
+方向语义：Left/Right = x-1/x+1；**Up/Down = y+1/y-1（ONI 的 y 向上）**。
+
+#### 主判据
+**`IUtilityNetworkMgr.GetConnections(cell, false)` == `expectedGetter`**（`expectedGetter` = 连 `before|dir` / 断 `before&~dir`）。
+`after.array` 是 `physicalGrid[cell].connections` 存的那份，**只作辅证**；两者不等 ⇒ `inconsistent:true`（两个值都带出来）。
+`networkId`（`GetNetworkForCell().id`）随网络重建可能变号，仅供参考。
+
+⚠️ **`after` 是"动作后立刻"的读数**：本 op 跑在主线程里，**不能在里面 Sleep**（0.94.6 实测睡 3 秒会把主线程堵死，
+心跳停 33 秒、后续请求全 `RETRY_LATER`）。要确认"游戏重建后有没有被改掉"，**隔 1s/3s 再发一次 `{"dryRun":true}`** 读本格即可：
+
+```bash
+# 上面那条断线之后，隔 1 秒复读（同参数 + dryRun）
+-d '{"op":"pipeLink","x":117,"y":217,"dir":"right","connect":false,"dryRun":true}'
+```
+
+#### 校验（游戏侧不拦，必须我们自己拦）
+`AddConnection` **不做任何校验** —— 实测往"右边没有线"的格子连，它照样接受（掩码 1→3），造出正常玩法不可能出现的悬空连接。所以本 op 在动作前拦：
+
+| 错误码 | 条件 |
+|---|---|
+| `404 NOT_FOUND_TARGET` | 本格在该层上没有建筑（含：显式给了 layer 但该层是空的 ⇒ 跨层混连也走这条） |
+| `400 NEIGHBOUR_NOT_CONDUIT` | 邻格在**同层**上没有对象（气/液/固/电不能混连） |
+| `400 PREFAB_MISMATCH` | 两格 prefabId 不同（例如细线接粗线）—— 复现游戏标红拒绝的行为 |
+| `400 AMBIGUOUS_LAYER` | 本格有多个可连层且没给 `layer` |
+| `503 TOOL_UNAVAILABLE` | `DisconnectTool.Instance == null`（工具未实例化） |
+
+#### 两个坑（都踩过）
+1. **`DisconnectCellsAction` 第 3 参是 `IHaveUtilityNetworkMgr`（组件本体），不是 `IUtilityNetworkMgr`（管理器）**。
+   传管理器 ⇒ `ArgumentException: Object of type 'UtilityNetworkManager\`2[...]' cannot be converted to type 'IHaveUtilityNetworkMgr'`。
+   正确写法：`go.GetComponent<IHaveUtilityNetworkMgr>()` 拿到组件再传。
+2. **`AddConnection` 不做校验、且只加不减**。判断它有没有生效，必须在"已断开"的格子上试；
+   在"已连通"的格子上调它看不出任何变化（0.94.1 就是因此误判"它没用"）。
+
+#### 实测记录（2026-11-18，Cycle-6 小档，`Wire` @ (117,217)/(118,217)，游戏放行）
+| 操作 | getter 前→后 | 数组 | networkId | applied |
+|---|---|---|---|---|
+| 断 `dir=right` | 3 → **1** | 1 | 0 → 0 | true |
+| 连 `dir=right` | 1 → **3** | 3 | 0 | true |
+| 邻格空 `(126,217) dir=right` | — | — | — | `400 NEIGHBOUR_NOT_CONDUIT` |
+| 跨层 `layer=gasConduit` | — | — | — | `404 NOT_FOUND_TARGET` |
+
+断完 1s/3s 复读仍是 1；连完 3s 复读仍是 3（**没有被重建冲掉**）。
+
+#### 为什么没有 `isDisconnected` / `bidirectional`
+* `IDisconnectable.IsDisconnected()` 实测**恒为 false**，且与真实状态矛盾（`Connect()` 返回 true 而掩码不动就是它）⇒ 不可作判据，已删。
+* `bidirectional` / `neighbourSynced` 基于"双向冗余"，而实测**双向冗余不成立**：`AddConnection` 只改本格，邻居那格的反方向位不跟着置位
+  （往空白格连，邻居 getter 始终 0）⇒ 字段已删。
+
 ### 卸载/回滚
 
 * 删掉 `mods\Local\OniAiBridge\` 文件夹即可；mod 不修改游戏文件、不改存档格式。

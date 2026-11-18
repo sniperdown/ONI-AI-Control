@@ -1,3 +1,52 @@
+## [新增] 0.94.7 / M7.1 —— `pipeLink`：把"连"和"断"合成一个精确单方向的 op（2026-11-18）
+
+**要什么**：AI 需要能像玩家一样把一根线/管道接上或剪断，且**只动一个方向**。前几轮（0.94.0~0.94.5）
+试了三条路都不成，这轮把入口定死。
+
+### 走到最终实现的三步（都是真机数据，不是推理）
+| 试法 | 结果 |
+|---|---|
+| `ClearCell` + `AddConnection(keep)` 改掩码 | ❌ 掩码改不动（3→3） |
+| 直接写 `physicalGrid[cell].connections` | ⚠️ 数组**留得住**（3s 不变），但 `GetConnections` **不读它** ⇒ 游戏不认账 |
+| **玩家工具那条路** | ✅ 两条都通 |
+
+### 最终实现
+* **连**：`IUtilityNetworkMgr.AddConnection(UtilityConnections, int32 cell, bool isVirtual)`（public）
+* **断**：反射 **`DisconnectTool.DisconnectCellsAction(int32 cell, GameObject go, IHaveUtilityNetworkMgr mgr, UtilityConnections connections)`**
+  —— 元数据真值：`private` / **`instance`** / 返回 `void`；实例取 **`public static` 字段 `DisconnectTool.Instance`**
+
+### 主判据
+**`IUtilityNetworkMgr.GetConnections(cell, false)`**（游戏认账那条）。`physicalGrid` 数组降为**辅证**，
+两者不等 ⇒ `inconsistent:true`。**删掉** `IDisconnectable.IsDisconnected()`（实测恒 false、与真实状态矛盾）
+和 `bidirectional`（双向冗余已证不成立）。
+
+### 校验（游戏侧完全不拦，必须自己拦）
+`AddConnection` **不做任何校验**：实测往"右边没有线"的格子连，它照样接受（1→3），造出悬空连接。
+⇒ 动作前拦：本格必须有该层建筑 / 邻格必须**同层 + 同预置 id**（跨层与细粗混连都拒）。
+
+### 主线程这条坑（0.94.6 首测栽的）
+`Commands.Execute` 本身跑在 `MainThread.InvokeAdaptive` 里 ⇒ **op 内部绝对不能 Sleep**。
+0.94.6 在里面睡 1s+2s 采样，直接把主线程堵住：心跳停 33 秒、后续请求全部 `RETRY_LATER`。
+⇒ 0.94.7 改成只给"动作后立刻"的读数，事后复读由调用方发 `{"dryRun":true}`（纯读）。
+
+### 在线验收（0.94.7，Cycle-6 小档，`Wire` @ (117,217)/(118,217)，游戏放行）
+| 用例 | 结果 |
+|---|---|
+| 断 `dir=right` | getter 3 → **1**，数组 1，`applied:true`；+1s/+3s 复读仍 1 |
+| 连回来 `dir=right` | getter 1 → **3**，数组 3，`applied:true`；+3s 复读仍 3 |
+| 邻格空 `(126,217) dir=right` | `400 NEIGHBOUR_NOT_CONDUIT` |
+| 跨层 `layer=gasConduit` | `404 NOT_FOUND_TARGET` |
+
+### 清理
+`0.94.2~0.94.5` 期间的三个临时探针端点（`/v1/debug/set-connections`、`/v1/debug/disconnect-cells`、
+`/v1/debug/add-connection`）**连同 `ConnProbe.cs` 一起删除** —— 它们是取证工具，结论已进本文档与 API.md，不留生产口子。
+
+### 改动文件
+新增 `src/OniAiBridge/PipeLink.cs`；`Commands.cs`（op 定义 + 分派）；`Bridge.cs`（版本号 + 删三条探针路由）；
+`docs/API.md`（新增 pipeLink 一节，含两个坑）；三处版本号；本文件。
+
+---
+
 ## [修正] 0.93.9 / M6.93 —— `spawnElement` 的"未确认"不再报 409（误报会诱发重复下发）（2026-11-18）
 
 **症状（0.93.8 实测）**：`{"op":"spawnElement","element":"Water","cell":138129,"mass":30,...}` 返回

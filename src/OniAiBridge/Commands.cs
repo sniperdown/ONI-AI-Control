@@ -30,6 +30,13 @@ namespace OniAiBridge
                           Note = "不改变暂停状态；内部 0 基，执行后回读 GetSpeed() 校验，没生效会回 409 NOT_APPLIED" },
                 new Def { Op = "setChorePriority", Summary = "改某个复制人当前任务的优先级", Args = "{\"dupe\":\"dbId 或名字\",\"priority\":1..9,\"priorityClass\":\"idle|basic|high|personalNeeds|topPriority|compulsory\"}",
                           Available = true, Note = "priorityClass 可选，默认 high；复制人当前没有任务时返回 404 NOT_FOUND_TARGET" },
+                new Def { Op = "pipeLink", Summary = "连接/切断一格管线或电线（精确单方向；把游戏里\"连\"与\"断\"两个工具合成一个入口）",
+                          Args = "{\"x\":int,\"y\":int,\"dir\":\"left|right|up|down\",\"connect\":true|false,\"layer\":\"gasConduit|liquidConduit|solidConduit|wire\"(可选)}",
+                          Available = true,
+                          Note = "连 = IUtilityNetworkMgr.AddConnection；断 = 反射 DisconnectTool.DisconnectCellsAction。"
+                               + "**主判据是 after3s.getter（GetConnections）== expectedGetter**，数组 mask 只作辅证（不等 ⇒ inconsistent:true）。"
+                               + "校验：本格必须有该层建筑 + 邻格必须同层同 prefabId（游戏自己的 AddConnection 不校验）。"
+                               + "不含 isDisconnected（实测恒 false）与 bidirectional（双向冗余已证不成立）" },
             };
         }
 
@@ -142,6 +149,8 @@ namespace OniAiBridge
                            + ",\"chore\":" + Snap.Str(chore.GetReportName())
                            + ",\"priorityClass\":" + Snap.Str(clsName) + ",\"priority\":" + pri + "}";
                 }
+                case "pipeLink":
+                    return PipeLink.Exec(body, out status, out errCode, out errMsg);
                 default:
                     if (Cheats.IsCheatOp(op))
                         return Cheats.Execute(op, body, out status, out errCode, out errMsg);

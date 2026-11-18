@@ -1,3 +1,35 @@
+## [修正] 0.93.9 / M6.93 —— `spawnElement` 的"未确认"不再报 409（误报会诱发重复下发）（2026-11-18）
+
+**症状（0.93.8 实测）**：`{"op":"spawnElement","element":"Water","cell":138129,"mass":30,...}` 返回
+`409 NOT_APPLIED: requested element Water but cell 138129 reports Oxygen`，可**水其实已经刷进去了**
+（紧接着 `GET /v1/map` 读到 `element=Water mass=30`）。
+
+**根因**：`DebugTool.DoReplaceSubstance(cell)` 写的是 sim 网格，而**同一帧**读 `Grid.Element[cell]` 仍返回旧元素。
+判据本身没错，错在"拿同一帧的回读当最终判决"。
+
+**为什么必须改**：409 对 AI 调用方是**可重试**信号。误报失败 ⇒ 重复下发 ⇒ 同一格被反复覆盖（水/元素叠加）。
+而这几个 op 本质是幂等写（把某格设成某元素某质量），重做一次代价远小于误报代价。
+
+**改法（只改返回码，不动判据）**
+| 回读结果 | 0.93.8 | 0.93.9 |
+|---|---|---|
+| 元素等于请求值 | `200 applied:true` | 不变 |
+| 元素是**有效但不同**的值（同帧旧值） | `409 NOT_APPLIED` | **`200 ok` + `applied:false` + `pending:true` + `readback{element,mass,temperature}`** |
+| 元素读到 `null`（格子不可用） | `409` | **仍 `409`**（真失败不许变成功） |
+| 参数错（越界/元素不存在/质量非法） | `400` / `404` | 不变 |
+
+**在线验收（0.93.9，Cycle-6 小档，debug on）**
+* 未确认路径：读前 `Oxygen 1.483kg` → 刷 Water 25kg ⇒ `200 / applied:false / pending:true / readback.element=Oxygen`
+  → **1.2 秒后**同格回读 `Water 25kg` ⇒ 证明"pending 但实际已写入"。
+* 已确认路径：同格再刷同元素 ⇒ `200 / applied:true / massAfter:25`。
+* 真失败仍在：`cell=99999999` ⇒ 400；`element=NoSuchElementXYZ` ⇒ 404；`mass=-5` ⇒ 400。
+
+**没验到的**：`readback == null` 那个 409 分支**构造不出来**（合法格里 `Grid.Element` 总有值），只做了代码层面保留。
+
+**改动文件**：`src/OniAiBridge/Cheats.cs`、`docs/API.md`（§3 校验与失败语义）、三处版本号、本文件。
+
+---
+
 ## [修正] 0.93.8 / M6.92 —— `mop` 的 `alreadyMarked` 补回 `MopPlacer`（+ 顶层聚合漏算）+ `/v1/saves` 补扫云存档（2026-11-17）
 
 > 两条都是 0.93.6 真机验收时挖出来的**自己的** bug。修完都在线验了（同机、同档、同一格）。

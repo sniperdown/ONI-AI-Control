@@ -279,12 +279,25 @@ curl -s -X POST -H "X-Oni-Token: $ONI_TOKEN" -H 'Content-Type: application/json'
 
 ### 校验与失败语义
 
-* 每个 op 执行后**回读**实际状态；不一致回 `409 NOT_APPLIED`（绝不假报成功）。
-* 参数严格校验：元素不存在 / 格子越界 / 质量非正 / 温度非法 → `400` 或 `404`，不静默降级。
+* 每个 op 执行后**回读**实际状态。回读不一致分两种，**别混**（0.93.9 起）：
+  * **未确认**（`spawnElement` 这种"同一帧写、同一帧读"）⇒ `200 ok` + `applied:false` + `pending:true` + `readback{…}`：
+    ```json
+    {"op":"spawnElement","applied":false,"pending":true,"cell":135578,"element":"Water",
+     "massRequested":25,"temperatureRequested":295,
+     "readback":{"element":"Oxygen","mass":1.483,"temperature":297.118},
+     "note":"同一帧回读：格子仍报旧元素…隔 ~1 秒回读本格确认…不要因为 pending 立即重发。"}
+    ```
+    **实测（0.93.9）**：该响应里 `readback.element=Oxygen`，1.2 秒后同一格回读是 `Water mass=25` ⇒ 元素确实写进去了。
+    409 对 AI 是"可重试"信号，误报会导致重复下发，所以这里不再报失败。
+  * **真失败**（回读拿到 `null` / 格子已不可用）⇒ `409 NOT_APPLIED`，仍然报失败。
+  * 已确认写入 ⇒ `applied:true`（同格再刷同元素实测返回 `applied:true, massAfter:25`）。
+* 参数严格校验：元素不存在 / 格子越界 / 质量非正 / 温度非法 → `400` 或 `404`，不静默降级
+  （实测：`cell=99999999` ⇒ 400；`element=NoSuchElementXYZ` ⇒ 404；`mass=-5` ⇒ 400）。
 * `spawnElement` 需要游戏里**打开过一次调试面板的元素绘制页**（`DebugPaintElementScreen.Instance`），
   否则 `503 NOT_READY` 并说明原因。
   ⚠️ **这个前置条件是"每会话"的**：`Instance` 只在游戏运行期间存在，**关游戏就没了**——
   每次重新开游戏后，都要再手动打开一次那个面板，`spawnElement` 才能用。
+  （`0.93.9` 实测这条已不成立：开 debug 后直接就能刷，没有开面板。见 CHANGELOG。）
 * `teleport` 用 `Transform` 定位（游戏没有"接受坐标的传送 API"），执行后立即回读 `Grid.PosToCell`；
   导航系统之后仍可能拉回，**请隔 1 秒用 `/v1/state` 复查 `cell`**。
 

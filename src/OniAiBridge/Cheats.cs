@@ -11,7 +11,11 @@ namespace OniAiBridge
     /// 因此不会被游戏改逻辑打死；行为也与玩家按调试快捷键完全一致（出问题可复现可对照）。
     ///
     /// 双闸门（缺一不可）：settings.allowCheats == true 且 DebugHandler.enabled == true。
-    /// 每个 op 执行完都**回读**实际状态，不一致回 409 NOT_APPLIED，绝不假报成功。
+    /// 每个 op 执行完都**回读**实际状态。回读不一致时**分两种情况**，别混：
+    /// * **真失败**（回读拿到 null / 格子已不可用）⇒ `409 NOT_APPLIED`；
+    /// * **未确认**（`spawnElement` 这种"同一帧写、同一帧读"的场景）⇒ `200 ok` + `applied:false` +
+    ///   `pending:true` + 回读快照。理由见 0.93.9 CHANGELOG：409 对 AI 是"可重试"信号，
+    ///   误报失败会导致**重复下发**；而这几个 op 本身是幂等写，重做代价远小于误报代价。
     /// </summary>
     internal static class Cheats
     {
@@ -28,7 +32,8 @@ namespace OniAiBridge
             new[] { "revealFog", "开图（DebugHandler.RevealFogOfWar）", "{\"enable\":true|false}",
                     "直接揭开战争迷雾；**不可撤销**（探索状态已改变）" },
             new[] { "spawnElement", "在指定格刷元素（调度 DebugPaintElementScreen + DebugTool.DoReplaceSubstance）", "{\"element\":\"元素 tag 名，如 Water\",\"cell\":int,\"mass\":kg,\"temperature\":K}",
-                    "直接改写模拟格子质量/温度；**破坏存档一致性、不可撤销**" },
+                    "直接改写模拟格子质量/温度；**破坏存档一致性、不可撤销**。回读是同一帧读的 —— 元素其实可能已经写进去但读不到，"
+                    + "那种情况返回 ok + applied:false + pending:true（不是失败），请隔 1 秒再读一次本格确认；只有回读拿到 null 才回 409" },
             new[] { "teleport", "把复制人挪到指定格（Transform 定位 + Navigator.Stop）", "{\"dupe\":\"dbId 或名字\",\"cell\":int}",
                     "绕过寻路；可能被导航系统拉回，请用 /v1/state 复查 cell。**实验性**" },
         };
@@ -156,18 +161,41 @@ namespace OniAiBridge
             var after = Grid.Element[cell];
             string afterId = null;
             try { if (after != null) afterId = after.tag.Name; } catch { }
-            if (!string.Equals(afterId, el.tag.Name, System.StringComparison.OrdinalIgnoreCase))
-            {
-                status = 409; code = "NOT_APPLIED";
-                msg = "requested element " + el.tag.Name + " but cell " + cell + " reports " + (afterId ?? "?");
-                return null;
-            }
             float kg = 0f;
             try { kg = Grid.Mass[cell]; } catch { }
-            return "{\"op\":\"spawnElement\",\"applied\":true,\"cell\":" + cell
-                   + ",\"element\":" + Snap.Str(afterId)
-                   + ",\"massAfter\":" + Snap.F(kg)
-                   + ",\"massRequested\":" + Snap.F(mass) + "}";
+            float tempAfter = 0f;
+            try { tempAfter = Grid.Temperature[cell]; } catch { }
+
+            if (string.Equals(afterId, el.tag.Name, System.StringComparison.OrdinalIgnoreCase))
+            {
+                return "{\"op\":\"spawnElement\",\"applied\":true,\"cell\":" + cell
+                       + ",\"element\":" + Snap.Str(afterId)
+                       + ",\"massAfter\":" + Snap.F(kg)
+                       + ",\"massRequested\":" + Snap.F(mass) + "}";
+            }
+
+            // ★ 0.93.9：**同一帧回读不可靠**。`DebugTool.DoReplaceSubstance` 把元素写进 sim 网格后，
+            //   `Grid.Element[cell]` 在同一帧仍报旧元素（实测：回 409 说 "cell reports Oxygen"，但 1 秒后
+            //   读出来已经是 Water 30kg）。⇒ 409 会让调用方以为失败而**重复下发**。
+            //   分两种：回读拿到**有效但不同**的元素 = "未确认"（ok + applied:false + pending:true）；
+            //           回读拿到 null = 格子已不可用 = **真失败**，仍 409。
+            if (afterId == null)
+            {
+                status = 409; code = "NOT_APPLIED";
+                msg = "requested element " + el.tag.Name + " but cell " + cell + " reads null（格子不可用？）";
+                return null;
+            }
+
+            return "{\"op\":\"spawnElement\",\"applied\":false,\"pending\":true,\"cell\":" + cell
+                   + ",\"element\":" + Snap.Str(el.tag.Name)
+                   + ",\"massRequested\":" + Snap.F(mass)
+                   + ",\"temperatureRequested\":" + Snap.F(temp)
+                   + ",\"readback\":{\"element\":" + Snap.Str(afterId)
+                   + ",\"mass\":" + Snap.F(kg)
+                   + ",\"temperature\":" + Snap.F(tempAfter) + "}"
+                   + ",\"note\":" + Snap.Str("同一帧回读：格子仍报旧元素。元素通常已写入 sim 网格但这一帧读不到，"
+                       + "所以判「未确认」而不是失败。隔 ~1 秒回读本格确认（GET /v1/map?bbox=x,y,x,y&stride=1）；"
+                       + "确认写入后才给 applied:true。不要因为 pending 立即重发。") + "}";
         }
 
         // ---------- 传送复制人 ----------

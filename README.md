@@ -5,11 +5,35 @@
 
 * 只监听 `127.0.0.1`，所有请求都要 token（首次运行自动生成）。
 * 作弊/调试类操作**默认关闭**，且底层**直接调用游戏自带的 Debug 工具**（不是本项目重写的逻辑）。
-* 目前阶段：**M6.90 / 0.93.6** —— 读（状态、建筑、地图降采样、环境、区域、世界/泉…）与写（挖掘、施工标记、门、UI 点击…）
-  都已有一批端点在用；逐项状态以上 [`docs/API.md`](docs/API.md) 的端点表为准（**标 ⚠️ 的才是还没实现的**），
-  版本与改动见 [`CHANGELOG.md`](CHANGELOG.md)。
+* 目前阶段：**M7.3 / 0.95.1** —— 34 条端点（读状态/建筑/地图/环境/区域/世界/泉/复制人/告警/存档 + 挖/建/打标记/管线/UI 点击/截图）。
+  逐项细节以 [`docs/API.md`](docs/API.md) 为准，版本与改动见 [`CHANGELOG.md`](CHANGELOG.md)。
 
-> API 文档：[`docs/API.md`](docs/API.md) · 设计文档：[`DESIGN.md`](DESIGN.md) · 变更记录：[`CHANGELOG.md`](CHANGELOG.md)
+---
+
+## 🤖 如果你是一个 AI，从这一段开始
+
+**别读这份 README 的其余部分**，直接读 **[`docs/AI-GUIDE.md`](docs/AI-GUIDE.md)（发布包里是 `AI-GUIDE.md`）** ——
+那是按"陌生 AI 装上就能自己用起来"写的操作手册。三个必知事实先给你：
+
+```
+地址      http://127.0.0.1:8770
+认证      请求头  X-Oni-Token: <token>
+token 在   %USERPROFILE%\Documents\Klei\OxygenNotIncluded\mods\config\OniAiBridge\settings.json
+           （键名是小写 "token"，32 位十六进制；token 是全量校验，本机不带也是 401）
+```
+
+一条能直接跑的自检：
+
+```bash
+TOKEN=$(powershell -NoProfile -Command "(Get-Content \"$env:USERPROFILE\Documents\Klei\OxygenNotIncluded\mods\config\OniAiBridge\settings.json\" -Raw | ConvertFrom-Json).token")
+curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/meta
+```
+
+`"ok":true` 就是通了，之后照 AI-GUIDE 的 §3 工作流走。
+
+---
+
+> API 文档：[`docs/API.md`](docs/API.md) · **AI 操作手册：[`docs/AI-GUIDE.md`](docs/AI-GUIDE.md)** · 设计文档：[`DESIGN.md`](DESIGN.md) · 变更记录：[`CHANGELOG.md`](CHANGELOG.md)
 
 ---
 

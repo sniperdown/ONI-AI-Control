@@ -26,6 +26,7 @@ namespace OniAiBridge
     {
         // ================= ③ 截图 =================
         public static string Shot(int wantW, int wantH, int quality, int cx, int cy, int cw, int ch,
+                                  int centerX, int centerY,
                                   out int status, out string code, out string message)
         {
             status = 200; code = null; message = null;
@@ -44,6 +45,10 @@ namespace OniAiBridge
 
             string data = null, fail = null, failCode = null; int failStatus = 500;
             int okT; bool busy;
+            // 相机临时移动用（0.95.0）：声明在 lambda 外，异常路径也要能还原
+            UnityEngine.Camera camRef = null;
+            UnityEngine.Vector3 savedPos = default(UnityEngine.Vector3);
+            bool camMoved = false;
             bool ran = MainThread.InvokeAdaptive(() =>
             {
                 try
@@ -76,7 +81,31 @@ namespace OniAiBridge
                     UnityEngine.Texture2D tex = null;
                     string renderPath = null;
 
+                    // ★ 0.95.0：按世界格坐标截图 —— 相机临时移过去，渲染完**必须还原**。
+                    //   为什么参数不叫 cx/cy：cx/cy 在本端点早就是"裁剪原点（屏幕像素）"，语义冲突。
+                    bool moveCam = centerX >= 0 && centerY >= 0;
+                    int centerCell = -1;
+                    camRef = cam;
+                    float[] worldView = new float[4];   // minX, minY, maxX, maxY
+                    if (moveCam)
+                    {
+                        centerCell = Grid.XYToCell(centerX, centerY);
+                        if (!Grid.IsValidCell(centerCell))
+                        {
+                            failCode = "BAD_CENTER";
+                            fail = "centerX/centerY 越界：(" + centerX + "," + centerY + ")";
+                            return;
+                        }
+                        savedPos = cam.transform.position;
+                        var tpos = Grid.CellToPos(centerCell);
+                        cam.transform.position = new UnityEngine.Vector3(tpos.x, tpos.y, savedPos.z);
+                        camMoved = true;
+                    }
+
                     // ① 首选 ScreenCapture.CaptureScreenshotAsTexture()（同步、只含游戏视图、不含桌面）
+                    //    ⚠️ 只有"没移相机"时才能用：ScreenCapture 抓的是当前屏幕，相机移动要到下一帧才反映，
+                    //    同帧抓会拿到移动前的画面 ⇒ 指定了 centerX/centerY 时强制走 ② 的离屏渲染。
+                    if (!moveCam)
                     try
                     {
                         tex = UnityEngine.ScreenCapture.CaptureScreenshotAsTexture();
@@ -107,6 +136,29 @@ namespace OniAiBridge
                         }
                     }
                     if (tex == null) { failCode = "SHOT_FAILED"; fail = "ScreenCapture 与 RenderTexture 都没拿到纹理"; return; }
+
+                    // ★ 移过相机 ⇒ 立刻还原并记下"这次实际看到的视野范围"，后面所有路径都不会再碰相机。
+                    if (camMoved)
+                    {
+                        try
+                        {
+                            worldView[0] = cam.ViewportToWorldPoint(new UnityEngine.Vector3(0f, 0f, 0f)).x;
+                            worldView[1] = cam.ViewportToWorldPoint(new UnityEngine.Vector3(0f, 0f, 0f)).y;
+                            worldView[2] = cam.ViewportToWorldPoint(new UnityEngine.Vector3(1f, 1f, 0f)).x;
+                            worldView[3] = cam.ViewportToWorldPoint(new UnityEngine.Vector3(1f, 1f, 0f)).y;
+                        }
+                        catch { }
+                        cam.transform.position = savedPos;
+                        camMoved = false;
+                        var back = cam.transform.position;
+                        if (UnityEngine.Vector3.Distance(back, savedPos) > 0.01f)
+                        {
+                            failCode = "CAM_RESTORE_FAILED";
+                            fail = "相机没能还原到原位置（原 " + savedPos.x.ToString("0.##") + "," + savedPos.y.ToString("0.##")
+                                 + "，现 " + back.x.ToString("0.##") + "," + back.y.ToString("0.##") + "）—— 已放弃本次截图";
+                            return;
+                        }
+                    }
 
                     // ③ 尺寸统一（ScreenCapture 给的是全屏尺寸）
                     if (tex.width != w || tex.height != h)
@@ -160,7 +212,22 @@ namespace OniAiBridge
                     sb.Append(",\"cameraRole\":").Append(Snap.Str(RoleOfCamera(cam)));
                     sb.Append(",\"renderPath\":").Append(Snap.Str(renderPath));
                     sb.Append(",\"avgLuma\":").Append(luma);
-                    sb.Append(",\"note\":").Append(Snap.Str("游戏内离屏渲染（不含 Windows 桌面）；只渲染一次，不改变游戏状态。"));
+                    if (moveCam || centerCell >= 0)
+                    {
+                        sb.Append(",\"center\":{\"x\":").Append(centerX).Append(",\"y\":").Append(centerY)
+                          .Append(",\"cell\":").Append(centerCell)
+                          .Append(",\"cameraMoved\":true,\"cameraRestored\":").Append(camMoved ? "false" : "true").Append('}');
+                        sb.Append(",\"viewWorld\":{\"minX\":").Append(Snap.F(worldView[0]))
+                          .Append(",\"minY\":").Append(Snap.F(worldView[1]))
+                          .Append(",\"maxX\":").Append(Snap.F(worldView[2]))
+                          .Append(",\"maxY\":").Append(Snap.F(worldView[3]))
+                          .Append(",\"perPixelX\":").Append(Snap.F((worldView[2] - worldView[0]) / (float)w))
+                          .Append(",\"perPixelY\":").Append(Snap.F((worldView[3] - worldView[1]) / (float)h)).Append('}');
+                    }
+                    sb.Append(",\"note\":").Append(Snap.Str(moveCam || centerCell >= 0
+                        ? "按世界格坐标截图：相机临时移到 (x,y) 后离屏渲染，渲染完已还原原位置（cameraRestored:true 才是真还原）。"
+                          + "viewWorld 是本次画面覆盖的世界坐标范围，perPixelX/Y 用来在像素↔格子之间换算。"
+                        : "游戏内离屏渲染（不含 Windows 桌面）；只渲染一次，不改变游戏状态。"));
                     sb.Append('}');
                     data = sb.ToString();
                     Log.Info("[shot] " + w + "x" + h + " bytes=" + png.Length + " -> " + full);

@@ -1,3 +1,37 @@
+## [新增] 0.95.0 / M7.2 —— 拆解标记 / 作业目标 / 按坐标截图 / 阻塞对话框（2026-11-18）
+
+四件事都是"让 AI 看得见原本看不见的东西"，全部真机验过。
+
+### ① `/v1/buildings` 加 `markedForDeconstruct`
+以前**待拆的建筑在接口里完全隐形**。现在每条给一个 bool，来源 `Deconstructable.IsMarkedForDeconstruction()`
+（元数据实测：方法存在，同名字段 `isMarkedForDeconstruction : bool` 也在）。没组件/未标记 ⇒ `false`。
+**实测**：`/v1/building/select (117,216)` → `/v1/ui` 拿到 `拆解Button` → `/v1/ui/click` 点它 ⇒
+`GET /v1/buildings?prefabId=Tile` 立刻见 `(117,216) markedForDeconstruct:true`，相邻格仍 `false`。不需要派小人。
+
+### ② `/v1/dupes[].choreTarget`：作业目标
+以前只知道"有人在拆"，不知道拆什么（`path.targetX/Y` 是**导航终点**，不是作业目标）。
+现在从 **`Chore.target`**（属性，类型 `IStateMachineTarget`）取 GameObject，给
+`{prefabId, cell, x, y, worldId, name}`；无目标 ⇒ `null`。
+**实测**：阿玛里 `chore=[Deconstruct]` 的 `choreTarget` 正好是刚标记的 `Tile @(117,216)`。
+
+### ③ `/v1/shot?centerX=&centerY=`：按世界坐标截一张
+内部把世界相机临时移到该格 → **离屏 RenderTexture** 渲染 → **立刻还原**（`finally` + 异常路径都还原，失败报
+`500 CAM_RESTORE_FAILED` 并放弃出图）。指定中心时**不用 ScreenCapture**（它抓当前屏幕，相机移动下一帧才反映）。
+参数**不叫 `cx/cy`** —— 那两个在本端点早就是"裁剪原点（屏幕像素）"，语义冲突。
+响应新增 `center{cameraMoved,cameraRestored}` 与 `viewWorld{minX,minY,maxX,maxY,perPixelX,perPixelY}`。
+**实测**：`centerX=117&centerY=217` ⇒ `viewWorld` 中心正好 `(117,217)`、`cameraRestored:true`。
+
+### ④ `/v1/meta` 加 `blockingDialog`：只报告，不自动点掉
+`{present, count, screens[], note}`，判据是**激活的 `KModalScreen` 及其子类**（`ConfirmDialogScreen` 是其一）。
+**不自动点掉**：自动确认可能误触真正的危险操作，让调用方自己决定（`/v1/ui/click` 已能做）。
+⚠️ `present:true` ≠ "必须点掉的确认框"：`ResearchScreen` 也是 `KModalScreen` 子类，实测殖民地加载后就会报出来。
+
+### 改动文件
+`src/OniAiBridge/Buildings.cs`、`Dupes.cs`、`UiShot.cs`、`Bridge.cs`（shot 参数 + meta 检测 + 版本号）、
+`docs/API.md`（新增 3.40 一节）、三处版本号、本文件。
+
+---
+
 ## [新增] 0.94.7 / M7.1 —— `pipeLink`：把"连"和"断"合成一个精确单方向的 op（2026-11-18）
 
 **要什么**：AI 需要能像玩家一样把一根线/管道接上或剪断，且**只动一个方向**。前几轮（0.94.0~0.94.5）

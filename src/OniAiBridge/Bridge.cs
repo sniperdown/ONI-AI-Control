@@ -16,8 +16,8 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.94.7";
-        public const string Stage = "M7.1";
+        public const string ModVersion = "0.95.0";
+        public const string Stage = "M7.2";
 
         static BridgeSettings settings;
         static TcpListener listener;
@@ -224,6 +224,7 @@ namespace OniAiBridge
                     if (method != "GET") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use GET")); return; }
                     {
                         int sw = 1600, sh = 0, sq = 80, scx = 0, scy = 0, scw = 0, sch = 0;
+                        int sCenterX = -1, sCenterY = -1;
                         if (!string.IsNullOrEmpty(query))
                         {
                             foreach (string kv in query.Split('&'))
@@ -235,10 +236,12 @@ namespace OniAiBridge
                                 if (k0 == "w") sw = n0; else if (k0 == "h") sh = n0; else if (k0 == "quality") sq = n0;
                                 else if (k0 == "cx") scx = n0; else if (k0 == "cy") scy = n0;
                                 else if (k0 == "cw") scw = n0; else if (k0 == "ch") sch = n0;
+                                // ★ 0.95.0：按世界格坐标截图（相机临时移过去，渲染后还原）
+                                else if (k0 == "centerX") sCenterX = n0; else if (k0 == "centerY") sCenterY = n0;
                             }
                         }
                         int stS; string cS, mS;
-                        string dS = UiShot.Shot(sw, sh, sq, scx, scy, scw, sch, out stS, out cS, out mS);
+                        string dS = UiShot.Shot(sw, sh, sq, scx, scy, scw, sch, sCenterX, sCenterY, out stS, out cS, out mS);
                         if (dS == null) { WriteJson(client, stS, Error(cS ?? "ERROR", mS ?? "unknown")); return; }
                         WriteJson(client, 200, Ok(dS));
                     }
@@ -913,6 +916,43 @@ namespace OniAiBridge
               .Append(",\"maxCells\":").Append(MapQuery.MaxCells)
               .Append(",\"channels\":[\"element\",\"temperature\",\"mass\"]}");
             sb.Append(",\"vision\":").Append(Snap.Str(Vision.ModeName));
+            // ★ 0.95.0：阻塞型对话框检测（`KModalScreen` 及其子类，如 ConfirmDialogScreen）。
+            //   **只报告，不自动点掉** —— 自动确认可能误触真正的危险操作，让调用方自己决定。
+            {
+                string blocking = null;
+                bool bRan = MainThread.Ready && MainThread.InvokeAdaptive(() =>
+                {
+                    try
+                    {
+                        var allScreens = UnityEngine.Object.FindObjectsOfType<KScreen>();
+                        var names = new System.Collections.Generic.List<string>();
+                        if (allScreens != null)
+                        {
+                            for (int i = 0; i < allScreens.Length; i++)
+                            {
+                                var s = allScreens[i];
+                                if (s == null) continue;
+                                bool act = false;
+                                try { act = s.IsActive(); } catch { }
+                                if (!act) continue;
+                                if (!(s is KModalScreen)) continue;      // 只有模态屏才算"阻塞"
+                                string n = null;
+                                try { n = s.screenName; } catch { }
+                                if (string.IsNullOrEmpty(n)) { try { n = s.gameObject.name; } catch { } }
+                                names.Add(Snap.Str(n ?? "?"));
+                            }
+                        }
+                        blocking = "{\"present\":" + (names.Count > 0 ? "true" : "false")
+                                 + ",\"count\":" + names.Count
+                                 + ",\"screens\":[" + string.Join(",", names.ToArray()) + "]"
+                                 + ",\"note\":" + Snap.Str("只报告不自动点掉（自动确认可能误触危险操作）。"
+                                     + "要清掉请自己点：POST /v1/ui/click {\"text\":\"好的\",\"screen\":\"ConfirmDialogScreen\"}")
+                                 + "}";
+                    }
+                    catch { }
+                }, 1500, 8000, out _, out _);
+                sb.Append(",\"blockingDialog\":").Append(string.IsNullOrEmpty(blocking) ? "null" : blocking);
+            }
             sb.Append("},");
             sb.Append("\"error\":null}");
             string __json = sb.ToString();

@@ -74,6 +74,7 @@ namespace OniAiBridge
                         }
 
                         string choreId = null, choreText = null;
+                        UnityEngine.GameObject choreTarget = null;
                         try
                         {
                             var cd = mi.GetComponent<ChoreDriver>();
@@ -82,6 +83,14 @@ namespace OniAiBridge
                             {
                                 try { choreText = chore.GetReportName(); } catch { }
                                 try { if (chore.choreType != null) choreId = chore.choreType.Id; } catch { }
+                                // ★ 0.95.0：**作业目标**（不是导航终点 —— `path.targetX/Y` 是走到哪儿，不是拆什么）。
+                                //   `Chore.target` 是属性、类型 `IStateMachineTarget`（元数据实测）⇒ 转 KMonoBehaviour 取 GameObject。
+                                try
+                                {
+                                    var tgt = chore.target as KMonoBehaviour;
+                                    if (tgt != null) choreTarget = tgt.gameObject;
+                                }
+                                catch { }
                             }
                         }
                         catch { }
@@ -207,6 +216,39 @@ namespace OniAiBridge
                         body.Append(",\"worldId\":").Append(worldId);
                         body.Append(",\"chore\":{\"text\":").Append(Snap.Str(choreText))
                             .Append(",\"id\":").Append(Snap.Str(choreId)).Append('}');
+                        // ★ 0.95.0：**作业目标**（prefabId + 坐标）。没有目标（如 IdleChore）⇒ null，不编造。
+                        if (choreTarget == null)
+                        {
+                            body.Append(",\"choreTarget\":null");
+                        }
+                        else
+                        {
+                            string ctPrefab = null;
+                            int ctCell = -1, ctX = -1, ctY = -1, ctWorld = -1;
+                            try
+                            {
+                                var cb = choreTarget.GetComponent<Building>();
+                                if (cb != null && cb.Def != null) ctPrefab = cb.Def.PrefabID;
+                                if (string.IsNullOrEmpty(ctPrefab))
+                                {
+                                    var kp2 = choreTarget.GetComponent<KPrefabID>();
+                                    if (kp2 != null) ctPrefab = kp2.PrefabTag.Name;
+                                }
+                            }
+                            catch { }
+                            try { ctCell = Grid.PosToCell(choreTarget); } catch { }
+                            if (ctCell >= 0)
+                            {
+                                try { Grid.CellToXY(ctCell, out ctX, out ctY); } catch { }
+                                try { ctWorld = Grid.WorldIdx != null ? Grid.WorldIdx[ctCell] : -1; } catch { }
+                            }
+                            body.Append(",\"choreTarget\":{\"prefabId\":").Append(Snap.Str(ctPrefab))
+                                .Append(",\"cell\":").Append(ctCell)
+                                .Append(",\"x\":").Append(ctX).Append(",\"y\":").Append(ctY)
+                                .Append(",\"worldId\":").Append(ctWorld)
+                                .Append(",\"name\":").Append(Snap.Str(choreTarget.name))
+                                .Append('}');
+                        }
                         body.Append(",\"amounts\":{").Append(amtVals).Append('}');
                         body.Append(",\"amountMeta\":{").Append(amtMeta).Append('}');
 

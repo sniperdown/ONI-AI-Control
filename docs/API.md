@@ -1137,6 +1137,64 @@ POST {"type":"build","prefabId":"Tile","x":100,"y":30,"validateOnly":true}
 
 ---
 
+
+### 3.40 0.95.0 四件事：拆解标记 / 作业目标 / 按坐标截图 / 阻塞对话框
+
+#### ① `/v1/buildings` 新增 `markedForDeconstruct`（bool）
+来源：该建筑上的 **`Deconstructable.IsMarkedForDeconstruction()`**（元数据实测存在；同名字段 `isMarkedForDeconstruction : bool` 也在，取方法更稳）。
+没有 `Deconstructable` 组件或未标记 ⇒ `false`。
+
+`【实测 2026-11-18】`（Cycle-6 小档）：`POST /v1/building/select {"x":117,"y":216}` → `GET /v1/ui` 拿到
+`UserMenuScreen/Buttons/拆解Button` → `/v1/ui/click` 点它 ⇒ 立刻 `GET /v1/buildings?prefabId=Tile` 见到
+`Tile @(117,216) markedForDeconstruct:true`，而相邻的 `(116,216)` 等仍是 `false`。
+**这一步不需要派小人** —— 待拆建筑以前在接口里完全隐形，现在看得见了。
+
+#### ② `/v1/dupes[].choreTarget`：作业目标（不是导航终点）
+`chore` 仍是 `{text,id}`；新增**同级**字段 `choreTarget`：
+
+```json
+"chore":{"text":"拆解","id":"Deconstruct"},
+"choreTarget":{"prefabId":"Tile","cell":137493,"x":117,"y":216,"worldId":0,"name":"TileComplete"}
+```
+
+来源：**`Chore.target`**（属性，类型 `IStateMachineTarget`，元数据实测）→ 转 `KMonoBehaviour` 取 `gameObject`；
+prefabId 走 `Building.Def.PrefabID`，退回 `KPrefabID.PrefabTag.Name`；坐标走 `Grid.PosToCell`。
+没有目标（如 `IdleChore`）⇒ `"choreTarget":null`，不编造。
+
+⚠️ **不要拿 `path.targetX/targetY/targetPrefabId` 当作业目标** —— 那是**导航终点**。
+`【实测 2026-11-18】` 阿玛里 `chore=[Deconstruct]` 的 `choreTarget` 正好是刚标记的 `Tile @(117,216)`；
+同批还能看到 `ManualGenerator` / `Outhouse` / `MopPlacer` 各自的目标。
+
+#### ③ `/v1/shot` 支持按世界坐标截：`centerX` / `centerY`
+```bash
+GET /v1/shot?w=800&h=450&centerX=117&centerY=217
+```
+内部：把选中的世界相机**临时移**到该格 → 走**离屏 RenderTexture** 渲染 → **立刻还原原位**（`finally` + 异常路径都还原）。
+指定中心时**不再用 `ScreenCapture`**：它抓的是当前屏幕，相机移动要到下一帧才反映，同帧抓会拿到移动前的画面。
+
+⚠️ 参数**没有**叫 `cx/cy`：`cx/cy` 在本端点早就是"裁剪原点（屏幕像素）"，语义冲突。
+
+响应新增：
+```json
+"center":{"x":117,"y":217,"cell":138129,"cameraMoved":true,"cameraRestored":true},
+"viewWorld":{"minX":94.244,"minY":204.2,"maxX":139.756,"maxY":229.8,"perPixelX":0.057,"perPixelY":0.057}
+```
+* `cameraRestored:true` 才是真还原；还原失败会直接报 `500 CAM_RESTORE_FAILED` 并放弃这张图（不把相机留在别处）。
+* `viewWorld` 是本次画面覆盖的世界坐标范围，`perPixelX/Y` 用来在像素↔格子之间换算。
+* `【实测 2026-11-18】` `centerX=117&centerY=217` ⇒ `viewWorld` 中心正好 `(117, 217)`，`renderPath:"RenderTexture"`，`cameraRestored:true`。
+
+#### ④ `/v1/meta` 新增 `blockingDialog`：**只报告，不自动点掉**
+```json
+"blockingDialog":{"present":true,"count":1,"screens":["ResearchScreen"],
+                   "note":"只报告不自动点掉（自动确认可能误触危险操作）…"}
+```
+判据：激活的 **`KScreen` 中属于 `KModalScreen` 及其子类**（`ConfirmDialogScreen` 就是其中之一）。
+**不自动点掉**是有意的 —— 自动确认可能误触真正的危险操作；要清掉由调用方自己决定，例如
+`POST /v1/ui/click {"text":"好的","screen":"ConfirmDialogScreen"}`（已实测可点掉）。
+
+⚠️ 语义要说清：`present:true` 表示"有模态屏开着"，**不等于"必须点掉的确认框"** ——
+`ResearchScreen` 也是 `KModalScreen` 子类，实测在殖民地加载后就会被报出来。
+调用方应先看 `screens` 里的名字再决定。
 ### 3.22 `GET /v1/saves`（M6.17，只读）
 
 ```json

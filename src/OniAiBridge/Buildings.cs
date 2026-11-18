@@ -165,6 +165,16 @@ namespace OniAiBridge
                     sb.Append(",\"operational\":").Append(operational ? "true" : "false");
                     // 没有 BuildingEnabledButton 的建筑（如砖块、门的一部分）没有"启用/禁用"概念 ⇒ null，而不是假装 true
                     sb.Append(",\"enabled\":").Append(hasEnabled ? (enabled ? "true" : "false") : "null");
+                    // ★ 0.95.0：是否已被标记拆除（`Deconstructable.IsMarkedForDeconstruction()`，元数据实测存在；
+                    //   同名字段 `isMarkedForDeconstruction : bool` 也在，但方法更稳）。没该组件 ⇒ false。
+                    bool markedForDeconstruct = false;
+                    try
+                    {
+                        var dc = b.GetComponent<Deconstructable>();
+                        if (dc != null) markedForDeconstruct = dc.IsMarkedForDeconstruction();
+                    }
+                    catch { }
+                    sb.Append(",\"markedForDeconstruct\":").Append(markedForDeconstruct ? "true" : "false");
                     sb.Append('}');
                     jsonMs += swPhase.ElapsedMilliseconds;
                 }

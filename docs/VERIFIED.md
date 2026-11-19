@@ -31,6 +31,7 @@
 | `GET /v1/settings` | ⚠️ | 0.29.0 验的是**游戏内设置页**，不是这个端点；未见 `/v1/settings` 的运行期记录 |
 | `GET /v1/commands` | ⚠️ | 0.6.0 修过"作弊命令没进列表"（文本替换静默失败），修后无真机记录 |
 | `GET /v1/events` | ⚠️ | SSE；0.3.0 起就标"未验证"，之后无记录 |
+| `GET /v1/journal` | ⚠️ | 0.96.1 新增（请求对账）；**无运行期样本**，只有编译 + `ReqJournal` 独立单测 13/13。见 §2 与 `docs/WORKBUDDY-CHANNEL.md` §4 |
 
 ### 1.2 世界与殖民地
 
@@ -125,6 +126,9 @@
 | `buildings` 分页 `total` / `hasMore` / `nextOffset`（0.96.0） | ⚠️ | 新加，**无运行期样本**（只有编译通过、0 error）。静态自证：`total = count + skipped + notEmittedDueToLimit`、`hasMore ⇔ nextOffset >= 0`、`nextOffset = offset + count`。见 `Buildings.cs` 类注释与 `tools/smoke.ps1` 新加的三条分页自检 |
 | `buildings` 的 `offset` 只在命中集计数（0.96.0 行为变更） | ⚠️ | 旧实现先跳 `offset` 再判 `prefabId` ⇒ 带 `prefabId` 翻页会漏/重；新实现把 `prefabId` 提前。**无运行期样本**；验法见 §3 第 11 条 |
 | `buildings` 默认不回 `name`（`?names=1` 才回，0.96.0） | ⚠️ | 无运行期样本。静态可判：`name` 只在 `withNames==true` 且**命中窗口内**时才拼（`Buildings.cs`，emit 段）；顶层 `namesIncluded` 如实报告 |
+| 响应信封回显 `reqId`（0.96.1） | ⚠️ | 无运行期样本。静态可判：`Ok()` / `Error()` / `ErrorDetails()` / `Health()` / `Meta()` 五处都拼 `ReqJournal.ReqIdJson()`；响应头另带 `X-Oni-Req-Id` |
+| 同 `reqId` 的 POST/PUT 回放（幂等，0.96.1） | ⚠️ | 无运行期样本。逻辑层有单测（回放命中 / `503` 不记账 / 超限 body / 环形淘汰 13/13）；**真机上"没有第二次执行"没验过** |
+| `503 RETRY_LATER` 不记账不回放（0.96.1） | ⚠️ | 单测覆盖（`Record(503)` 后再 `TryReplay` 必 miss）；真机未验 |
 
 ### 2.1 三条「只有源码依据」的欠账 —— 逐条核对（2026-11-19，子会话 oni-mod-2）
 
@@ -186,6 +190,7 @@ compact 每条只拼 `kind/role/text/path`（`Ui.cs:203` → `UiRows.AppendJsonC
 | 9 | `alerts` 200 KB 截断 | 大档刚进图时 `?detail=1` | 低 |
 | 10 | `GET /v1/events` / `/v1/commands` / `/v1/env` / `/v1/materials` / `/v1/research` / `/v1/build-menu` / `/v1/door` / `/v1/settings` / `/v1/tools` / `/v1/ui/widgets` / `/v1/debug/mods` | 各打一次，确认真实返回形状与 API.md 一致 | 低-中：文档可能与实现漂移 |
 | 11 | `/v1/buildings` 分页（0.96.0） | `?limit=2000&offset=0` 拿 `total`/`nextOffset`，再按 `nextOffset` 翻到 `hasMore:false`，核对：两页 `total` 相同、`sum(count)==total`、最后一页 `nextOffset==-1`；再带一个 `prefabId` 翻两页确认无重复（`cell` 不重复） | 中：翻不完整张图 |
+| 12 | `/v1/journal` + `reqId` 回放（0.96.1） | ① `GET /v1/health` 带 `X-Oni-Req-Id: t1`，看响应体 `reqId:"t1"`；② 同 id 再发 `POST /v1/job`（`dryRun:true`），看响应头 `X-Oni-Replayed: 1` 且 `/v1/marks` 回读**没有第二次执行**；③ `GET /v1/journal?reqId=t1` 能查到；④ 关掉游戏后用 `tools/oni_client.ps1` 发一次，须 `exit 5` 而不是假装成功 | 中：重试会干两遍 / 失败被当成功 |
 
 ---
 

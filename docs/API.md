@@ -56,10 +56,14 @@ curl -s -H "X-Oni-Token: $ONI_TOKEN" http://127.0.0.1:8770/v1/meta
 * 响应统一信封：
 
 ```json
-{ "apiVersion": "1.1", "ok": true|false, "seq": 1234, "serverTime": "...", "data": {...}|null, "error": null|{...} }
+{ "apiVersion": "1.1", "ok": true|false, "seq": 1234, "serverTime": "...", "reqId": "...", "data": {...}|null, "error": null|{...} }
 ```
 
 * `seq` 单调递增（每次响应都 +1），用于去重/排序。
+* **`reqId`（0.96.1）**：请求可带 `X-Oni-Req-Id: <id>`（或 `?reqId=`），服务端清洗后原样回显在这个字段里；
+  没带就是服务端生成的 `srv-…`。**同一个 `reqId` 的 POST/PUT 重发 ⇒ 服务端回放上次响应、不再执行**
+  （响应头 `X-Oni-Replayed: 1`）。详见 §3.41。它和 `seq` 不是一回事：`seq` 是"第几次响应"，
+  `reqId` 是"哪一次请求"。
 * **每个数据块自带 `ts`**（采集时刻）；同一响应里各块共享一次主线程采集，所以 `ts` 通常相同。
 * 单位陷阱（**必读**）：
   * `amounts.Calories` 是原始游戏值，**÷1000 = 界面 kcal**；另给 `amounts.CaloriesKcal`。
@@ -85,6 +89,7 @@ curl -s -H "X-Oni-Token: $ONI_TOKEN" http://127.0.0.1:8770/v1/meta
 | GET | `/v1/dupes/{id}` | 单个复制人详情 | ⚠️ |
 | GET | `/v1/map` | **地图降采样**：`bbox` + `stride` 必填，三通道（元素 id/温度/质量），单次硬上限 64×64 格；**默认关**（`allowMap`） | ✅ M6.89（0.93.5） |
 | GET | `/v1/catalog/{kind}` | 静态表（buildings/elements/techs） | ⚠️ |
+| GET | `/v1/journal` | **请求对账**（0.96.1）：`?reqId=` 查单条（含响应体）/ `?since=&limit=` 列账目 | ✅ 实现 / ⚠️ 未装机 |
 
 ## 3. `GET /v1/state`
 
@@ -3186,3 +3191,88 @@ y    = bbox.y0 + row * stride
   大存档里 4096 格的采集耗时、`Grid.Visible` 的迷雾值与 `/v1/buildings` 是否完全一致。
   第一次装机后应核对：`bbox` 取一个已知格（例如某个复制人脚下）看 `element`/`temperature` 是否与游戏内
   温度叠加层一致；以及 `AIEnableFog=true` 时 `emitted < cells` 是否真的对应屏幕上看不见的地方。
+
+---
+
+### 3.41 `GET /v1/journal` + `reqId`：请求对账与幂等回放（0.96.1）
+
+> 起因：外部 agent（WorkBuddy 那轮验收）的 shell 只活一轮、`curl` 没超时没重试，
+> 一次超时或 `503` 之后**"执行了但回执丢了"和"根本没执行"长得一模一样**，而写操作又没有幂等键。
+> 设计说明与"现状摸底"见 [`WORKBUDDY-CHANNEL.md`](WORKBUDDY-CHANNEL.md)。
+> 验证状态见 [`VERIFIED.md`](VERIFIED.md)。
+
+#### 3.41.1 `reqId` 怎么给、怎么回
+
+| 位置 | 写法 |
+|---|---|
+| 请求头（推荐） | `X-Oni-Req-Id: wb-20261119-abc12345` |
+| query | `?reqId=wb-20261119-abc12345` |
+
+* 服务端**清洗**：只留 `[A-Za-z0-9._:-]`，最长 64；清洗后为空则当作"没给"。
+* 回显：响应体顶层 `reqId`（`/v1/health`、`/v1/meta`、全部 `/v1/*`），响应头 `X-Oni-Req-Id` 也带一份。
+* 没给 ⇒ 服务端生成 `srv-<ticks>-<n>`。这种 id 永不重复，**所以永远不会命中回放**（= 0.96.0 的行为）。
+
+#### 3.41.2 回放（幂等）规则
+
+```
+同一个 reqId 的 POST / PUT 第二次到达  ⇒  直接返回上次那条响应 + 响应头 X-Oni-Replayed: 1
+                                      ⇒  **不再执行一次**
+```
+
+* **只有 POST / PUT 回放**（写操作）。GET 不去重（读没有副作用，重复读反而可能是想要的）。
+* **`503 RETRY_LATER` 不记账、不回放** —— 它的语义是"动作尚未执行，请重试"，回放会把重试堵死。
+* 记忆时点是**先记账、再写 socket**：写 socket 失败正是"动作做了、回执没送到"，那条账就是重试要回放的东西。
+* 响应体超过 64 KB 的（本次没有写接口会这么大）只记状态码；这种情况下回放会给
+  `REPLAY_BODY_UNAVAILABLE`（`ok:false`），并明确写"这次**没有再次执行**"。
+
+#### 3.41.3 查账
+
+```
+GET /v1/journal?reqId=wb-20261119-abc12345      # 单条（含那次响应体）
+GET /v1/journal?since=41&limit=50               # 账目列表（不含响应体）
+GET /v1/journal                                 # 等价 since=0&limit=20
+```
+
+单条（命中）：
+
+```json
+{"apiVersion":"1.1","ok":true,"seq":77,"reqId":"wb-20261119-abc12345","data":{
+  "reqId":"wb-20261119-abc12345","found":true,
+  "entry":{"seq":41,"reqId":"wb-20261119-abc12345","method":"POST","path":"/v1/job",
+           "status":200,"ok":true,"at":"2026-11-19T18:20:11+08:00","elapsedMs":12,
+           "replays":1,"bodyTruncated":false,
+           "body":"{\"apiVersion\":\"1.1\",\"ok\":true,…}"}}}
+```
+
+单条（没查到）：
+
+```json
+{"reqId":"wb-…","found":false,"note":"本进程内存里没有这条 reqId 的账。可能是：①请求没到达服务端；
+ ②服务端回了 503（按约定不记账）；③账已被挤出（容量 128 条）；④mod 或存档重载过。
+ **`found:false` 不等于「一定没执行」**，只等于「没有记录」。"}
+```
+
+列表：
+
+```json
+{"since":41,"capacity":128,"stored":17,"count":17,"entries":[
+  {"seq":42,"reqId":"…","method":"GET","path":"/v1/state","status":200,"ok":true,
+   "at":"…","elapsedMs":3,"replays":0,"bodyTruncated":false}]}
+```
+
+#### 3.41.4 边界（别当保证）
+
+* 账本**只在内存**、环形 **128** 条；**mod 重载 / 存档重载即清空**。
+* 不做离线投递、不做队列、不做持久化；`found:false` 只说明"没有记录"。
+* 客户端封装：`tools/oni_client.ps1`（reqId + 超时 + 有界重试 + 自动对账 + 退出码 0/1/2/3/4/5），
+  退出码语义见 [`WORKBUDDY-CHANNEL.md`](WORKBUDDY-CHANNEL.md) §2.4。
+
+#### 3.41.5 未验证到哪一步（诚实清单）
+
+* **编译 0 error**；`ReqJournal` 的记账/回放/环形淘汰/查账逻辑有**独立单测 13/13**（把 `ReqJournal.cs`
+  原文链进一个桩掉 `Snap` 的控制台工程跑，不碰游戏）。
+* `tools/oni_client.ps1` 的失败路径实测过：连不上端口 ⇒ 3 次尝试后 `exit 5`（`reconciled:"unknown"`）；
+  坏 `Path` / POST 空 body ⇒ `exit 1`。
+* ⚠️ **`/v1/journal` 端点与回放本身未装机**：0.96.1 没有真机样本。装机后按
+  `WORKBUDDY-CHANNEL.md` §4 的四步验（reqId 回显 → 同 id 重发看到 `X-Oni-Replayed: 1` 且**没有第二次执行**
+  → `/v1/journal` 能查到 → 关掉游戏后客户端 `exit 5` 而不是假装成功）。

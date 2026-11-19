@@ -16,7 +16,7 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.96.0";
+        public const string ModVersion = "0.96.1";
         public const string Stage = "M7.4";
 
         static BridgeSettings settings;
@@ -141,6 +141,34 @@ namespace OniAiBridge
                 return;
             }
 
+            // ★ 0.96.1：**请求对账**。客户端可给 `X-Oni-Req-Id: <id>`（或 `?reqId=`）给这次请求起名字；
+            //   同一个 id 的 POST 再来一次 ⇒ **直接回放上次那条响应，不再执行**。
+            //   这一条是给"shell 只活一轮、curl 没有重试"的外部 agent 用的：超时后重发不会把活干两遍。
+            string reqIdGiven = ReqJournal.Sanitize(HeaderValue(lines, "X-Oni-Req-Id") ?? QueryValue(query, "reqId"));
+            if ((method == "POST" || method == "PUT") && reqIdGiven != null)
+            {
+                int rpStatus; string rpBody; bool rpMissing;
+                if (ReqJournal.TryReplay(reqIdGiven, out rpStatus, out rpBody, out rpMissing))
+                {
+                    if (rpMissing || rpBody == null)
+                    {
+                        string note = "同一个 reqId 上次已执行（status " + rpStatus + "），但响应体超过 "
+                                    + ReqJournal.MaxBodyStored + " 字节未存；这次**没有再次执行**。";
+                        rpBody = (rpStatus >= 200 && rpStatus < 300)
+                            ? Ok("{\"replayed\":true,\"bodyUnavailable\":true,\"originalStatus\":" + rpStatus
+                                 + ",\"note\":" + Snap.Str(note) + "}")
+                            : Error("REPLAY_BODY_UNAVAILABLE", note);
+                    }
+                    WriteJson(client, rpStatus, rpBody,
+                        "X-Oni-Replayed: 1\r\nX-Oni-Req-Id: " + reqIdGiven + "\r\n", false);
+                    Log.Info("[req] REPLAY reqId=" + reqIdGiven + " " + method + " " + path
+                             + " status=" + rpStatus + "（未再次执行）");
+                    return;
+                }
+            }
+            string reqId = reqIdGiven ?? ReqJournal.NewId();
+            ReqJournal.Begin(method, path, reqId);
+
             switch (path)
             {
                 case "/":
@@ -162,6 +190,10 @@ namespace OniAiBridge
                     return;
                 case "/v1/meta": WriteJson(client, 200, Meta()); return;
                 case "/v1/health": WriteJson(client, 200, Health()); return;
+                case "/v1/journal":   // ★ 0.96.1：请求对账（只读；`?reqId=` 查单条 / `?since=&limit=` 列账目）
+                    if (method != "GET") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use GET")); return; }
+                    HandleJournal(client, query);
+                    return;
                 case "/v1/debug/mods": HandleDebugMods(client); return;   // 诊断：不放进公共 /v1/meta
                 case "/v1/catalog": HandleCatalog(client); return;   // M5.2 只读建筑目录
                 case "/v1/debug/vision-sample": HandleVisionSample(client, query); return;   // 一次性诊断（验完可删）
@@ -864,6 +896,8 @@ namespace OniAiBridge
             sb.Append("\"apiVersion\":\"").Append(ApiVersion).Append("\",");
             sb.Append("\"ok\":true,\"seq\":").Append(NextSeq()).Append(',');
             sb.Append("\"serverTime\":\"").Append(Escape(System.DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ssK"))).Append("\",");
+            // ★ 0.96.1：回显请求 id（对账用；`?reqId=` 或 `X-Oni-Req-Id`，没给就是服务端生成的）
+            if (ReqJournal.CurrentId != null) sb.Append("\"reqId\":").Append(Snap.Str(ReqJournal.CurrentId)).Append(',');
             sb.Append("\"data\":{");
             sb.Append("\"mod\":{\"name\":\"ONI AI Bridge\",\"version\":\"").Append(ModVersion)
               .Append("\",\"staticID\":\"").Append(BridgeSettings.StaticId)
@@ -1017,6 +1051,7 @@ namespace OniAiBridge
         static string Health()
         {
             string json = "{\"apiVersion\":\"" + ApiVersion + "\",\"ok\":true,\"seq\":" + NextSeq()
+                 + ReqJournal.ReqIdJson()                 // ★ 0.96.1
                  + ",\"data\":{\"alive\":true,\"pumpReady\":" + (MainThread.Ready ? "true" : "false")
                  + ",\"stage\":\"" + Stage + "\"},\"error\":null}";
             JsonCheck.Validate(json, "health");   // 手写 JSON ⇒ 出门前必须能解析
@@ -1027,7 +1062,64 @@ namespace OniAiBridge
         {
             return "{\"apiVersion\":\"" + ApiVersion + "\",\"ok\":true,\"seq\":" + NextSeq()
                  + ",\"serverTime\":\"" + Escape(System.DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ssK"))
-                 + "\",\"data\":" + data + ",\"error\":null}";
+                 + "\"" + ReqJournal.ReqIdJson()      // ★ 0.96.1：回显请求 id（对账用）
+                 + ",\"data\":" + data + ",\"error\":null}";
+        }
+
+        /// <summary>取某个请求头的值（大小写不敏感）；没有 ⇒ <c>null</c>。0.96.1 起 `X-Oni-Req-Id` 用它。</summary>
+        static string HeaderValue(string[] headerLines, string name)
+        {
+            if (headerLines == null) return null;
+            for (int i = 1; i < headerLines.Length; i++)
+            {
+                int c = headerLines[i].IndexOf(':');
+                if (c <= 0) continue;
+                if (!headerLines[i].Substring(0, c).Trim().Equals(name, System.StringComparison.OrdinalIgnoreCase)) continue;
+                return headerLines[i].Substring(c + 1).Trim();
+            }
+            return null;
+        }
+
+        /// <summary>取 query 里某个参数的原值（不做 URL 解码：reqId 的字符集被 <see cref="ReqJournal.Sanitize"/> 限死，不需要解码）。</summary>
+        static string QueryValue(string query, string key)
+        {
+            if (string.IsNullOrEmpty(query) || string.IsNullOrEmpty(key)) return null;
+            foreach (string kv in query.Split('&'))
+            {
+                int e = kv.IndexOf('=');
+                if (e <= 0) continue;
+                if (kv.Substring(0, e) != key) continue;
+                return kv.Substring(e + 1);
+            }
+            return null;
+        }
+
+        /// <summary>0.96.1：`GET /v1/journal` —— 请求对账（只读）。<c>?reqId=</c> 查单条（带响应体），<c>?since=&amp;limit=</c> 列账目。</summary>
+        static void HandleJournal(TcpClient client, string query)
+        {
+            string data = null;
+            try
+            {
+                string rid = ReqJournal.Sanitize(QueryValue(query, "reqId"));
+                if (!string.IsNullOrEmpty(rid)) data = ReqJournal.LookupJson(rid);
+                else
+                {
+                    long since = 0; int limit = 20;
+                    string sSince = QueryValue(query, "since"), sLimit = QueryValue(query, "limit");
+                    if (sSince != null) long.TryParse(sSince, out since);
+                    if (sLimit != null) int.TryParse(sLimit, out limit);
+                    if (since < 0) since = 0;
+                    if (limit <= 0) limit = 20;
+                    data = ReqJournal.ListJson(since, limit);
+                }
+                JsonCheck.Validate(data, "journal");   // 手写 JSON ⇒ 出门前必须能解析
+            }
+            catch (System.Exception e)
+            {
+                WriteJson(client, 500, Error("JOURNAL_FAILED", e.GetType().Name + ": " + e.Message));
+                return;
+            }
+            WriteJson(client, 200, Ok(data));
         }
 
         static bool Authorized(string[] headerLines, string query)
@@ -1077,6 +1169,7 @@ namespace OniAiBridge
         {
             string d = string.IsNullOrEmpty(detailsJson) ? "null" : detailsJson;
             return "{\"apiVersion\":\"" + ApiVersion + "\",\"ok\":false,\"seq\":" + NextSeq()
+                 + ReqJournal.ReqIdJson()             // ★ 0.96.1
                  + ",\"data\":null,\"error\":{\"code\":\"" + Escape(code) + "\",\"message\":\"" + Escape(message)
                  + "\",\"details\":" + d + "}}";
         }
@@ -1084,6 +1177,7 @@ namespace OniAiBridge
         internal static string Error(string code, string message)
         {
             return "{\"apiVersion\":\"" + ApiVersion + "\",\"ok\":false,\"seq\":" + NextSeq()
+                 + ReqJournal.ReqIdJson()             // ★ 0.96.1
                  + ",\"data\":null,\"error\":{\"code\":\"" + Escape(code) + "\",\"message\":\"" + Escape(message) + "\",\"details\":null}}";
         }
 
@@ -1096,15 +1190,28 @@ namespace OniAiBridge
 
         internal static void WriteJson(TcpClient client, int status, string body, string extraHeaders)
         {
+            WriteJson(client, status, body, extraHeaders, true);
+        }
+
+        /// <summary>
+        /// 发响应。<paramref name="record"/>=true 时**先记账、再写 socket**（0.96.1）：
+        /// 写 socket 失败正是"动作已执行、回执没送到"那种情况，那条账就是重试时该回放的东西；
+        /// 反过来先写后记就会漏掉这一格。回放路径自己传 false（否则会把 replay 记成一次新执行）。
+        /// </summary>
+        internal static void WriteJson(TcpClient client, int status, string body, string extraHeaders, bool record)
+        {
+            if (record) { try { ReqJournal.Record(status, body); } catch { } }
             byte[] payload = Encoding.UTF8.GetBytes(body);
             string reason = status == 200 ? "OK" : status == 400 ? "Bad Request" : status == 401 ? "Unauthorized"
                           : status == 404 ? "Not Found" : status == 405 ? "Method Not Allowed"
                           : status == 503 ? "Service Unavailable" : status == 504 ? "Gateway Timeout" : "Error";
+            string rid = ReqJournal.CurrentId;
             string head =
                 "HTTP/1.1 " + status + " " + reason + "\r\n" +
                 "Content-Type: application/json; charset=utf-8\r\n" +
                 "Content-Length: " + payload.Length + "\r\n" +
                 "Cache-Control: no-store\r\n" +
+                (string.IsNullOrEmpty(rid) ? "" : "X-Oni-Req-Id: " + rid + "\r\n") +
                 (string.IsNullOrEmpty(extraHeaders) ? "" : extraHeaders) +
                 "Connection: close\r\n\r\n";
             var st = client.GetStream();

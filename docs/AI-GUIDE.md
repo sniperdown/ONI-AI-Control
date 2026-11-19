@@ -1,7 +1,7 @@
 # OniAiBridge — AI 操作手册
 
 > 读者是**一个没有任何上下文的 AI**。你不需要先读别的文档，也不需要有人给你 token。
-> 版本：0.96.0 / M7.4（API `apiVersion: "1.1"`）。人看的接口细节在 [`API.md`](API.md)，本文件是**动手版**。
+> 版本：0.96.1 / M7.4（API `apiVersion: "1.1"`）。人看的接口细节在 [`API.md`](API.md)，本文件是**动手版**。
 
 ---
 
@@ -65,7 +65,7 @@ curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/health
 
 ---
 
-## 2. 端点总表（34 条，全部实装）
+## 2. 端点总表（35 条，全部实装）
 
 > `GET` 端点都是只读；`POST` 会改状态（除 `dryRun` 分支）。所有请求都要 `X-Oni-Token`。
 
@@ -79,6 +79,7 @@ curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/health
 | PUT | `/v1/settings` | 改设置 | 会回读校验，写盘失败会报错 |
 | GET | `/v1/commands` | 列出所有 `/v1/command` 的 op 及**当前可用性** | 作弊类 op 会带 `available`/`unavailableCode` |
 | GET | `/v1/events` | SSE 事件流 | 长连接；`Last-Event-ID` 续传 |
+| GET | `/v1/journal` | **请求对账**（0.96.1） | `?reqId=` 查单条（含那次响应体）/ `?since=&limit=` 列账目；见 §4.9 |
 
 ### 2.2 世界与殖民地状态
 
@@ -285,6 +286,7 @@ curl -s -H "X-Oni-Token: $TOKEN" "http://127.0.0.1:8770/v1/inventory?tag=SandSto
 * `/v1/alerts` 有 **200 KB 硬上限**，超了给 `alerts:null` + `truncated:true`，请改用 `?detail=0` 或缩小范围。
 
 ### 4.6 `blockingDialog`：只报告，不自动点掉
+
 `/v1/meta` 的 `blockingDialog` 用**白名单**判定（`ConfirmDialogScreen` / `BarterConfirmationScreen` /
 `GameOverScreen` / `VictoryScreen` / `DLCBetaMessageScreen` / `OldVersionMessageScreen` / `DemoOverScreen` / `PatchNotesScreen`）。
 `present:true` ⇒ 有确认/终止类模态框挡着，**此时不要假设可以操作世界**，自己决定要不要点掉
@@ -301,6 +303,31 @@ curl -s -H "X-Oni-Token: $TOKEN" "http://127.0.0.1:8770/v1/inventory?tag=SandSto
 ### 4.8 写操作纪律
 1. 先 `dryRun` / `validateOnly`；2. 看 `list[]` 是否点对了目标；3. 再 `confirm:true`；
 4. 用**不依赖自身代码的锚**核实（回读 `/v1/buildings`、`/v1/dupes` 的 `chore`、再 `dryRun` 看 `alreadyMarked`）。
+
+### 4.9 请求对账：`reqId` + `/v1/journal`（0.96.1）
+
+你的 shell 如果**一次只活一条命令**（超时就得重来），写操作就带上 `X-Oni-Req-Id` —— 这样**不会把活干两遍**：
+
+```bash
+REQ="wb-$(date +%Y%m%d%H%M%S)-$RANDOM"
+curl -sS --max-time 8 --retry 2 --retry-delay 1 \
+     -H "X-Oni-Token: $TOKEN" -H "X-Oni-Req-Id: $REQ" \
+     -X POST -H 'Content-Type: application/json' \
+     -d '{"type":"dig","x":111,"y":220,"dryRun":true}' \
+     "http://127.0.0.1:8770/v1/job"
+# 没拿到响应 ⇒ 先查账，别急着重发：
+curl -sS -H "X-Oni-Token: $TOKEN" "http://127.0.0.1:8770/v1/journal?reqId=$REQ"
+```
+
+三条规则：
+1. **同一个 `reqId` 的 POST/PUT 重发 = 回放上次响应**（响应头 `X-Oni-Replayed: 1`），**不会执行第二次**；
+   `503 RETRY_LATER` 例外 —— 它意味着"动作尚未执行"，重试是安全的、也是应该的。
+2. 响应体顶层有 `reqId` 字段，回执、日志、账本三处能对上号。
+3. `found:false` 只说明"没有记录"（账本只在内存、留 128 条、mod 重载即清空），**不等于一定没执行**。
+
+Windows 上更省事的做法：`pwsh -File tools/oni_client.ps1 -Method POST -Path '/v1/job' -BodyFile <json>`
+（自动 reqId + 有界重试 + 自动对账 + 明确的退出码 0/2/3/4/5）。
+
 
 ---
 
@@ -326,7 +353,7 @@ curl -s -H "X-Oni-Token: $TOKEN" "http://127.0.0.1:8770/v1/inventory?tag=SandSto
 ## 6. 版本与兼容
 
 * `apiVersion` 目前在 `"1.1"`；新增字段是**加法**，不删旧字段。
-* 端点集合当前 **34 条**（`grep 'case "/v1/' src/OniAiBridge/Bridge.cs` 可核对）。
+* 端点集合当前 **35 条**（`grep 'case "/v1/' src/OniAiBridge/Bridge.cs` 可核对）。
 * 每次发布都升版本（`/v1/meta` 的 `mod.version` / `mod.stage` 可直接读）。
 * **验证状态**（哪些真机验过、哪些只有编译）见 [`VERIFIED.md`](VERIFIED.md)。**没有证据的项，不要当成保证。**
 * 装机后先跑 `pwsh -File tools/smoke.ps1`（17 条只读自检）；改版本用 `tools/bump-version.ps1`（一次改三处）。

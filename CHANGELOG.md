@@ -1,3 +1,43 @@
+## [新增] 0.96.1 / M7.4 —— WorkBuddy 那条链路补上"对得上号"：`reqId` + 幂等回放 + `/v1/journal`（2026-11-19）
+
+**背景**：`shared/2026-11-19-workbuddy-acceptance/` 那三轮验收暴露的不是"AI 不聪明"，是**渠道不可靠**：
+它的 shell 只活一轮、`curl` 没超时没重试，一次超时或 `503 RETRY_LATER`（语义明确是"动作尚未执行"）之后，
+**"执行了但回执丢了"和"根本没执行"长得一模一样**；而写操作**没有幂等键**，它重发一次就真做第二遍；
+`run.log` 里每行只有时间戳 + 命令回显，**没有请求 id**，与 `Player.log`、与回执三者对不上号。
+
+**改法（全在 mod 侧，WorkBuddy 一行代码都不用改）**：
+
+* **`reqId`**：请求可带 `X-Oni-Req-Id: <id>`（或 `?reqId=`），服务端清洗（`[A-Za-z0-9._:-]`、≤64）后
+  **回显**在响应体顶层 `reqId`（`Ok/Error/ErrorDetails/Health/Meta` 五处）+ 响应头 `X-Oni-Req-Id`；
+  没带则生成 `srv-…`（永不重复 ⇒ 永不回放）。
+* **幂等回放**：同一个 `reqId` 的 **POST/PUT** 再来一次 ⇒ 直接回放上次响应（响应头 `X-Oni-Replayed: 1`），
+  **不再执行**。`503` 不记账、不回放（它意味着"还没执行"）。记账时点是**先记账再写 socket** ——
+  写 socket 失败正是"做了但回执没送到"，那条账就是重试要回放的。
+* **`GET /v1/journal`**（35 条端点）：`?reqId=` 查单条（**带那次响应体**）⇒ "到底做没做、结果是什么"；
+  `?since=&limit=` 列账目。账本只在内存、环形 128 条、只存 <64 KB 的响应体，
+  **mod/存档重载即清空** ⇒ 响应里明写 `found:false ≠ 一定没执行`。
+* **`tools/oni_client.ps1`**：把"生成 reqId → 超时 → 有界重试（只重试"必定没执行"的：连不上/超时/503）
+  → 重试用尽后**自动查账** → 明确的退出码"这套流程固定下来：
+  `0` 成功 / `1` 本地错 / `2` 服务端明确拒绝 / `3` 没执行可重来 / `4` 已执行别重发 / `5` 未知（不许当成功）。
+* **`docs/WORKBUDDY-CHANNEL.md`**：先写清现状（对方是什么、shell 活一轮、实际路径 `127.0.0.1:8770` + token 位置、
+  `run.log` 留痕），再列"不可靠的五条表现"，最后给这个最小方案与**边界**（不持久化、不做离线投递、不改 WorkBuddy）。
+
+**验证**：
+
+* 编译 **0 error**（33 个既存警告）。
+* `ReqJournal` 的逻辑用**独立单测 13/13** 验过（把 `ReqJournal.cs` 原文链进一个桩掉 `Snap` 的控制台工程：
+  回放命中、`replays` 计数、`503` 不记账、超限 body、环形淘汰、列表升序、`since` 过滤、`Sanitize` 边界）。
+* `tools/oni_client.ps1` 的失败路径实测：连不上端口 ⇒ 3 次尝试后 `exit 5`（`reconciled:"unknown"`）；
+  坏 `Path` / POST 空 body ⇒ `exit 1`。
+* ⚠️ **未装机**：`/v1/journal` 与回放本身**没有真机样本**（`VERIFIED.md` 全部标 ⚠️，验法在 §3 第 12 条）。
+  **"回放没有第二次执行"这一条特别要用 `/v1/marks` 回读验**，别只看 `X-Oni-Replayed` 头。
+
+**改动文件**：`src/OniAiBridge/ReqJournal.cs`（新）、`src/OniAiBridge/Bridge.cs`（reqId 解析/回放/`/v1/journal`/
+信封回显/WriteJson 记账顺序）、`tools/oni_client.ps1`（新）、`docs/WORKBUDDY-CHANNEL.md`（新）、
+`docs/API.md`（§1 信封 + 端点表 + §3.41）、`docs/AI-GUIDE.md`（§2.1 表 + §4.9）、`docs/VERIFIED.md`、
+`README.md`、三处版本号、本文件。
+
+---
 ## [修正] 0.96.0 / M7.4 —— `/v1/buildings` 能翻完整张图：`total` + `hasMore` + `nextOffset`，单页瘦身（2026-11-19）
 
 **症状**：大地图实测 `totalItems=72851`（ENTITY-SURVEY），而 `limit` 上限 2000 ⇒ 一页最多 2000 条。

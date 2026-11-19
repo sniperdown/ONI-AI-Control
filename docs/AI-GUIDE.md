@@ -356,7 +356,7 @@ Windows 上更省事的做法：`pwsh -File tools/oni_client.ps1 -Method POST -P
 * 端点集合当前 **35 条**（`grep 'case "/v1/' src/OniAiBridge/Bridge.cs` 可核对）。
 * 每次发布都升版本（`/v1/meta` 的 `mod.version` / `mod.stage` 可直接读）。
 * **验证状态**（哪些真机验过、哪些只有编译）见 [`VERIFIED.md`](VERIFIED.md)。**没有证据的项，不要当成保证。**
-* 装机后先跑 `pwsh -File tools/smoke.ps1`（17 条只读自检）；改版本用 `tools/bump-version.ps1`（一次改三处）。
+* 装机后先跑 `pwsh -File tools/smoke.ps1`（23 条只读自检，`grep "Check '" tools/smoke.ps1` 可核对）；改版本用 `tools/bump-version.ps1`（一次改三处）。
 
 ---
 

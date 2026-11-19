@@ -137,8 +137,8 @@
 
 #### ① `blockingDialog.present:true` —— **已找到运行期样本，升 ✅**
 
-`present:true` 的成立条件（源码）：`Bridge.cs:946` 只收 `BlockingScreenNames` 里的类名（白名单在 `Bridge.cs:977-984`，
-含 `ConfirmDialogScreen`），`Bridge.cs:948` 用 `names.Count > 0` 决定 `present`。
+`present:true` 的成立条件（源码）：`Bridge.cs:980` 只收 `BlockingScreenNames` 里的类名（白名单在 `Bridge.cs:1011-1020`，
+含 `ConfirmDialogScreen`），`Bridge.cs:984` 用 `names.Count > 0` 决定 `present`。
 运行期样本（不是本次装机）：0.95.1 / M7.3，WorkBuddy 于 2026-11-19 02:58:49 取 `/v1/meta` ⇒
 `{"present":true,"count":1,"screens":["ConfirmDialogScreen"]}`；02:59:06（点掉后）⇒ `{"present":false,"count":0,"screens":[]}`。
 原文：`shared/2026-11-19-workbuddy-acceptance/run.log` 第 15、16、19 行。
@@ -161,8 +161,8 @@
 
 #### ③ `clickables` 默认 compact + `data.clickablesMode` —— 仍 ⚠️
 
-源码：默认值在 `Bridge.cs:443`（`bool cCompact = true;` "默认 = compact"）；只有 query 里**出现** `clickables=`
-才会被覆盖（`Bridge.cs:455-461` → `Ui.cs:81-88 ParseClickablesMode`：缺省/空串 ⇒ true，
+源码：默认值在 `Bridge.cs:475`（`bool cCompact = true;` "默认 = compact"）；只有 query 里**出现** `clickables=`
+才会被覆盖（`Bridge.cs:487-494` → `Ui.cs:81-88 ParseClickablesMode`：缺省/空串 ⇒ true，
 `full`/`all` ⇒ false，其它任何值 ⇒ true 兜底）。输出侧：`Ui.cs:103` `cMode = compact ? "compact" : "full"`，
 `Ui.cs:215` 写进顶层 `data.clickablesMode`，`Ui.cs:257` 每个 screen 内再写一份同值副本；
 compact 每条只拼 `kind/role/text/path`（`Ui.cs:203` → `UiRows.AppendJsonCompact`）。

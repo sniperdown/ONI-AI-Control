@@ -1,7 +1,7 @@
 # OniAiBridge — AI 操作手册
 
 > 读者是**一个没有任何上下文的 AI**。你不需要先读别的文档，也不需要有人给你 token。
-> 版本：0.95.1 / M7.3（API `apiVersion: "1.1"`）。人看的接口细节在 [`API.md`](API.md)，本文件是**动手版**。
+> 版本：0.96.0 / M7.4（API `apiVersion: "1.1"`）。人看的接口细节在 [`API.md`](API.md)，本文件是**动手版**。
 
 ---
 
@@ -97,7 +97,7 @@ curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/health
 
 | 方法 | 路径 | 用途 | 关键点 |
 |---|---|---|---|
-| GET | `/v1/buildings` | 建筑清单 | 参数 `offset`/`limit`/`prefabId`/`x0,y0,x1,y1`；每条含 `markedForDeconstruct`、`underConstruction`、`operational` |
+| GET | `/v1/buildings` | 建筑清单 | 参数 `offset`/`limit`/`prefabId`/`names=1`/`x0,y0,x1,y1`；**分页**看 `total`+`hasMore`+`nextOffset`；每条含 `markedForDeconstruct`、`underConstruction`、`operational`（`name` 需 `?names=1`） |
 | GET | `/v1/dupes` | 复制人清单 | 含 `chore{text,id}` + **`choreTarget`**（作业目标，不是导航终点）、`path`、`stuckProbe` |
 | GET | `/v1/alerts` | 告警（按严重度） | `?detail=1` 给明细；**200 KB 硬上限**，超了给 `alerts:null,truncated:true` |
 | GET | `/v1/inventory?tag=<元素>` | 某元素的库存/地面/全图量 | **必须给 `tag`**（如 `?tag=SandStone`），否则 400 |
@@ -278,7 +278,10 @@ curl -s -H "X-Oni-Token: $TOKEN" "http://127.0.0.1:8770/v1/inventory?tag=SandSto
 
 ### 4.5 响应体积
 * `/v1/ui` 的 `clickables` 默认 `compact` 且每屏最多 2000 条（`?clickablesLimit=N` 可调，上限 20000）。
-* `/v1/buildings` 有 `limit`（默认值见 API.md），超出用 `truncated:true` + `notEmittedDueToLimit` 表达。
+* `/v1/buildings` 有 `limit`（默认 500、上限 2000）。**要翻完整张图**（实测大地图 72851 条）：
+  从 `offset=0` 开始，每次请求后看 `hasMore`，为 `true` 就把 `offset` 换成 `nextOffset` 再来一次，
+  `total` 是第一页就该记下的**总条数**（`ceil(total/limit)` 页）。`offset ≥ total` ⇒ `count:0` 且不报错。
+  每条**默认不带 `name`**（省体积；要逐条中文名加 `&names=1`）；要不要翻完，先看第一页的 `total` 再决定。
 * `/v1/alerts` 有 **200 KB 硬上限**，超了给 `alerts:null` + `truncated:true`，请改用 `?detail=0` 或缩小范围。
 
 ### 4.6 `blockingDialog`：只报告，不自动点掉
@@ -325,6 +328,8 @@ curl -s -H "X-Oni-Token: $TOKEN" "http://127.0.0.1:8770/v1/inventory?tag=SandSto
 * `apiVersion` 目前在 `"1.1"`；新增字段是**加法**，不删旧字段。
 * 端点集合当前 **34 条**（`grep 'case "/v1/' src/OniAiBridge/Bridge.cs` 可核对）。
 * 每次发布都升版本（`/v1/meta` 的 `mod.version` / `mod.stage` 可直接读）。
+* **验证状态**（哪些真机验过、哪些只有编译）见 [`VERIFIED.md`](VERIFIED.md)。**没有证据的项，不要当成保证。**
+* 装机后先跑 `pwsh -File tools/smoke.ps1`（17 条只读自检）；改版本用 `tools/bump-version.ps1`（一次改三处）。
 
 ---
 

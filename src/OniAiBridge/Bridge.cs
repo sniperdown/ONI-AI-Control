@@ -16,8 +16,8 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.95.1";
-        public const string Stage = "M7.3";
+        public const string ModVersion = "0.96.0";
+        public const string Stage = "M7.4";
 
         static BridgeSettings settings;
         static TcpListener listener;
@@ -584,6 +584,7 @@ namespace OniAiBridge
         {
             int offset = 0, limit = BuildingsQuery.DefaultLimit; string fPrefab = null;
             bool hasBox = false; int bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
+            bool withNames = false;   // ★ 0.96.0：`?names=1` 才回本地化 name（默认不回，见 BuildingsQuery 类注释）
             if (!string.IsNullOrEmpty(query))
             {
                 foreach (string kv in query.Split('&'))
@@ -595,6 +596,7 @@ namespace OniAiBridge
                     int n;
                     if (!int.TryParse(v, out n)) continue;
                     if (k == "offset") offset = n; else if (k == "limit") limit = n;
+                    else if (k == "names") withNames = (n != 0);
                     if (k == "x0") { bx0 = n; hasBox = true; }
                     else if (k == "y0") { by0 = n; hasBox = true; }
                     else if (k == "x1") { bx1 = n; hasBox = true; }
@@ -606,7 +608,7 @@ namespace OniAiBridge
             string data = null;
             int usedTimeout; bool wasBusy;
             bool ok = MainThread.InvokeAdaptive(
-                () => { try { data = BuildingsQuery.Query(offset, limit, fPrefab, hasBox, bx0, by0, bx1, by1); } catch { data = null; } },
+                () => { try { data = BuildingsQuery.Query(offset, limit, fPrefab, hasBox, bx0, by0, bx1, by1, withNames); } catch { data = null; } },
                 5000, 30000, out usedTimeout, out wasBusy);
             if (!ok)
             {

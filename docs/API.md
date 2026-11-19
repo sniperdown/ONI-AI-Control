@@ -2,6 +2,8 @@
 
 > 这份文档假设你**完全不知道**本项目是什么：只要《缺氧》在跑、mod 已装，你就能照着这里写客户端。
 > 当前实现阶段与版本号见 [`CHANGELOG.md`](../CHANGELOG.md) 顶部条目；本文件里标 ⚠️ 的才是还没实现的。
+> **验证状态**（哪条端点真机验过、哪条只有编译）见 [`VERIFIED.md`](VERIFIED.md)。两个 ⚠️ 意思不同：
+> 本文件的 ⚠️ = **未实现**；VERIFIED.md 的 ⚠️ = **没有运行期证据**。
 
 ## 0. 30 秒上手
 
@@ -467,20 +469,40 @@ print("top elements", list(st["elements"]["items"].items())[:5])
 
 - **迷雾**：`AIEnableFog=true` 时只返回 `Grid.Visible[cell] > 0` 的建筑（判定发生在采集循环内）；
   响应里 `fogged` 与 `visibility.filteredCount` / `visibility.rule` 如实报告模式与被滤掉的条数。
-- **上限**：超过 `limit` 时 `truncated: true`，用 `offset` 翻页。
+- **分页（0.96.0 起按"命中集"切片）**：`offset` **只在通过 fog / bbox / prefabId 之后的命中条目上计数**
+  （旧实现先跳 `offset` 再判 `prefabId` ⇒ 带 `prefabId` 翻页既漏又重）。
+  所以 `offset=0,500,1000…` 逐页翻不会有洞、不会重复：
+  - `total` = **命中总数**（= 可翻页总数，`ceil(total/limit)` 页翻完）
+  - `hasMore` / `nextOffset` = 下一页入口（`hasMore:false` 时 `nextOffset:-1`）
+  - `offset ≥ total` ⇒ `count:0, hasMore:false`，**不报错**（翻到底不是错误）
+  - `truncated` 保留，与 `hasMore` 同值（向后兼容）
+  - 实测背景：大地图 `totalItems=72851`、`limit` 上限 2000 ⇒ 旧版一页最多 2000 条且没有总数，翻不动
+- **单页体积**：只序列化本窗口内的 `limit` 条（**7 万条不会一次性攒进内存**，边扫边数、只留窗口）。
+  每条默认**不含 `name`**：要名字就加 `?names=1`（`name` 走 `Catalog.PlainText`，而翻页时每页都要全量扫一遍算 `total`
+  ⇒ 旧实现等于每页做 7 万次 LocText 查表）。`prefabId → name` 的对照也可以一次拿 `/v1/catalog`。
 - **过滤计数（M5.4a 拆开）**：
   - `filteredByFog`：被迷雾挡掉的条数（`Grid.Visible[cell] == 0`）
   - `filteredInvalid`：算不出有效格子的条数（**与迷雾无关**，两种模式应相等）
-  - `filteredCount`：**两者之和**（向后兼容；别把它当"被迷雾滤掉"的专属计数）
+  - `filteredByBox`：落在 `x0/y0/x1/y1` 框外的条数（0.96.0 起进硬等式）
+  - `filteredByPrefab`：`prefabId` 不匹配的条数
+  - `skipped`：命中但落在本页窗口**之前**的条数（`offset` 跳过的）
+  - `notEmittedDueToLimit`：命中但落在本页窗口**之后**的条数（`hasMore:true` 时 > 0）
+  - `filteredCount`：**`filteredByFog + filteredInvalid + filteredByPrefab` 三者之和**（向后兼容；
+    别把它当"被迷雾滤掉"的专属计数；`filteredByBox` 不进这个和）
 - **硬等式**（可用于自检）：
   ```
-  scanned = count + filteredByFog + filteredInvalid + skipped
-  offset=0 时：scanned = count + filteredByFog + filteredInvalid
+  scanned = count + skipped + notEmittedDueToLimit + filteredByFog + filteredInvalid + filteredByBox + filteredByPrefab
+  total   = count + skipped + notEmittedDueToLimit
+  offset=0 时：total = count + notEmittedDueToLimit
   同一 offset/limit：count_all = count_fog + filteredByFog
   ```
-- **字段**：`prefabId / name / x / y / cell / worldId / operational / enabled`。
+- **字段**：`prefabId / x / y / cell / worldId / underConstruction / operational / enabled / markedForDeconstruct`。
   `enabled` 为 `null` 表示该建筑没有启用/禁用概念（如砖块）。
+  额外加 `?names=1` 时每条多一个 `name`（本地化中文名），响应顶层 `namesIncluded` 如实报告。
 - 温度、材料、是否在用等**暂不提供**（字段越多 AI 读起来越贵）。
+- **响应顶层**：`buildings[]` / `count` / `offset` / `limit` / `total` / `hasMore` / `nextOffset` / `scanned` /
+  `skipped` / `totalItems` / `truncated` / `namesIncluded` / `elapsedMs` / `timing` / `fogged` / 各过滤计数 / `visibility`。
+  ⚠️ `total`（可翻页总数）与 `totalItems`（表里原有对象数，含被滤掉的）**不是一回事**，别混用。
 ### 3.12 字段语义契约（M5.4 起）
 
 - **`null` = 该概念不适用于这个对象**（例：砖块没有"启用/禁用"，`enabled: null`）。
@@ -493,21 +515,34 @@ print("top elements", list(st["elements"]["items"].items())[:5])
 ```json
 {
   "buildings": [
-    { "prefabId": "Tile", "name": "砖块", "x": 117, "y": 216, "cell": 141417,
-      "worldId": 0, "operational": false, "enabled": null },
-    { "prefabId": "ManualDoor", "name": "手动气闸", "x": 111, "y": 222, "cell": 141303,
-      "worldId": 0, "operational": true, "enabled": true }
+    { "prefabId": "Tile", "x": 117, "y": 216, "cell": 141417, "worldId": 0,
+      "underConstruction": false, "operational": false, "enabled": null, "markedForDeconstruct": false },
+    { "prefabId": "ManualDoor", "x": 111, "y": 222, "cell": 141303, "worldId": 0,
+      "underConstruction": false, "operational": true, "enabled": true, "markedForDeconstruct": false }
   ],
   "count": 2,
   "offset": 0,
   "limit": 500,
+  "total": 2,
+  "hasMore": false,
+  "nextOffset": -1,
   "scanned": 2,
+  "skipped": 0,
+  "totalItems": 2,
   "truncated": false,
+  "namesIncluded": false,
+  "elapsedMs": 1,
+  "timing": { "loopMs": 0, "visMs": 0, "nameMs": 0, "jsonMs": 0 },
   "fogged": true,
+  "filteredByPrefab": 0,
+  "filteredByBox": 0,
+  "notEmittedDueToLimit": 0,
   "filteredByFog": 0,
   "filteredInvalid": 0,
   "visibility": {
     "aiEnableFog": true,
+    "filteredByPrefab": 0,
+    "filteredByBox": 0,
     "filteredByFog": 0,
     "filteredInvalid": 0,
     "filteredCount": 0,
@@ -515,6 +550,16 @@ print("top elements", list(st["elements"]["items"].items())[:5])
   }
 }
 ```
+
+翻完整张图（0.96.0 起）的写法：
+
+```text
+GET /v1/buildings?limit=2000&offset=0        -> total=72851, count=2000, hasMore=true,  nextOffset=2000
+GET /v1/buildings?limit=2000&offset=2000     -> total=72851, count=2000, hasMore=true,  nextOffset=4000
+... 直到 hasMore:false（offset=72000 那页 count=851, nextOffset=-1）
+```
+
+⚠️ **`name` 默认不返回**（0.96.0）：需要逐条中文名就加 `&names=1`；只要"某个 prefab 叫什么"则查 `/v1/catalog` 一次即可。
 
 ⚠️ **`"enabled": null` 是正常值，不是缺字段**：
 表示该建筑**没有"启用/禁用"这个概念**（砖块、门的一部分等没有 `BuildingEnabledButton` 组件）。
@@ -1500,25 +1545,29 @@ POST /v1/ui/click {"techId":"FINEDINING","allowToggleOff":true}   → jobState:"
 
 | 字段 | 含义 |
 |---|---|
-| `totalItems` | 表里建筑总数 = **已完工（`Components.BuildingCompletes.Count`）+ 施工中（`FindObjectsOfType<BuildingUnderConstruction>()`）**（M6.50 起施工点默认计入） |
+| `totalItems` | 表里建筑总数 = **已完工（`Components.BuildingCompletes.Count`）+ 施工中（`FindObjectsOfType<BuildingUnderConstruction>()`）**（M6.50 起施工点默认计入）。**不是可翻页总数** |
+| **`total`** | **0.96.0**：**命中总数** —— 通过 `fog / bbox / prefabId` 之后的条数 = **可翻页总数**；`total = count + skipped + notEmittedDueToLimit` |
+| **`hasMore` / `nextOffset`** | **0.96.0**：还有下一页吗 / 下一页的 `offset`（没有则 `-1`）；`truncated` 与之同值（向后兼容） |
 | `scanned` | **本次全量扫描过的条数**（不再早退；原实现只报"本页处理了几条"，会误读成全档总数） |
 | `count` / `emitted` | 真正写进 `buildings[]` 的条数 |
 | `filteredByFog` / `filteredInvalid` / `filteredByPrefab` / `filteredByBox` | 各类过滤掉的数量 |
-| `skipped` | 因 `offset` 跳过的数量 |
-| **`notEmittedDueToLimit`** | 扫到了但因 `limit` 没输出的数量（新增；`truncated` 为真时会出现） |
+| `skipped` | 命中但因 `offset` 落在本页窗口**之前**的数量（**0.96.0 起 `prefabId` 先判、再算 `offset`**，所以 `skipped = min(offset, total)`） |
+| **`notEmittedDueToLimit`** | 命中但因落在本页窗口**之后**没输出的数量（`hasMore` 为真时会出现） |
 
 **硬等式**（每轮日志都会自检）：
 ```
 scanned == emitted + filteredByFog + filteredInvalid + filteredByPrefab + filteredByBox + skipped + notEmittedDueToLimit
+total   == emitted + skipped + notEmittedDueToLimit
 ```
 `limit=1` 时：`scanned` = 全表条数（如 202），`count` = 1，`notEmittedDueToLimit` = 200 左右 ——
 **两者不再混为一谈。**
 
 **M6.50：施工点（蓝图）默认列出，并带 `underConstruction` 字段。**
+（0.96.0 起默认不带 `name`，要名字加 `?names=1`；下面的形状就是默认形态。）
 
 ```json
-{"prefabId":"AlgaeHabitat","name":"藻类箱","x":109,"y":217,
- "cell":…,"worldId":0,"underConstruction":true,"operational":false,"enabled":null}
+{"prefabId":"AlgaeHabitat","x":109,"y":217,
+ "cell":…,"worldId":0,"underConstruction":true,"operational":false,"enabled":null,"markedForDeconstruct":false}
 ```
 
 为什么改：`Components.BuildingCompletes` **只有已完工的建筑** —— 蓝图画在哪、有没有真的加上，

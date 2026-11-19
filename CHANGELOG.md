@@ -1,3 +1,41 @@
+## [修正] 0.96.0 / M7.4 —— `/v1/buildings` 能翻完整张图：`total` + `hasMore` + `nextOffset`，单页瘦身（2026-11-19）
+
+**症状**：大地图实测 `totalItems=72851`（ENTITY-SURVEY），而 `limit` 上限 2000 ⇒ 一页最多 2000 条。
+旧实现虽然收 `offset`，但**没有"可翻页的总数"**：`totalItems` 只是"表里有多少个对象"（含被迷雾/坐标框撞掉的），
+`scanned` 是"这次扫了几条"，两个都不能拿去除以 2000 算页数。另外三处让翻页更难用：
+
+1. `offset` 在 `prefabId` **之前**就跳了 ⇒ 带 `prefabId` 翻页时，`offset` 会跳掉"本来就不会被返回"的条目，页与页之间既漏又重；
+2. `name`（本地化中文名）在**窗口判定之前**就算（`nameMs` 计时就是为它加的）⇒ 每翻一页要做 7 万次
+   `Catalog.PlainText` 查表，而其中 99% 的结果会被 `limit` 丢掉；
+3. 没有任何"下一页在哪"的信号，调用方只能自己猜 `offset += limit` 什么时候到底。
+
+**改法**（只动 `Buildings.cs` 的计数/切片顺序，外加 `Bridge.cs` 一个参数解析）：
+
+* **窗口切在命中集上**：顺序固定为 `无效格 → 迷雾 → bbox → prefabId → 窗口`。
+  `offset` 只对**命中条目**计数 ⇒ 逐页翻没有洞、不重复；带 `prefabId` 也一样。
+* **给出可翻页总数与下一页入口**：`total`（命中总数）/ `hasMore` / `nextOffset`（没有下一页给 `-1`）；
+  `offset ≥ total` ⇒ `count:0, hasMore:false`，**不报错**（翻到底不是错误）。`truncated` 保留，与 `hasMore` 同值。
+* **7 万条不进内存**：单页只把窗口内的 `limit` 条拼进 `StringBuilder`（本实现是"边扫边数、只留窗口"，
+  总数在扫完时自然得到，不需要第二次扫描，也不攒全量 JSON）。
+* **字段瘦身**：每条默认**不再返回 `name`**，要就 `?names=1`（并且只在窗口内计算）。
+  单条体积 173 B → 154 B（−11%，中文名按 UTF-8 3 B/字；按 Tile/ManualDoor/LiquidPump/Wire/GasConduit 五种样板行平均），
+  2000 条一页 338 KB → 301 KB；真正的收益是**每页省掉 7 万次 LocText**。
+  `prefabId → name` 需要对照时走 `/v1/catalog` 一次拿全表。
+* **计数进硬等式**：`filteredByBox` 从"只报不算"改成进等式；新硬等式
+  `scanned = count + skipped + notEmittedDueToLimit + filteredByFog + filteredInvalid + filteredByBox + filteredByPrefab`
+  与 `total = count + skipped + notEmittedDueToLimit`，日志每轮自检。
+
+**没验到的**：只有**编译通过（0 error，33 个既存警告）**，本版**未装机** ⇒ `VERIFIED.md` §2 里
+`total/hasMore/nextOffset`、`offset` 语义变更、`names` 默认关这三条全标 ⚠️，验法写在 §3 第 11 条。
+
+**顺带**（同一版，`tools/smoke.ps1`）：硬等式跟着换口径，并新增三条自检 ——
+分页等式、`nextOffset/hasMore` 自洽、第 2 页与第 1 页 `total` 相同且 `skipped=min(50,total)`、默认不含 `name`；
+`ui` 那条从"compact 或 full 都算过"收紧成**必须是 compact**（这样跑一次 smoke 就能补上 `VERIFIED.md` §2.1 ③ 缺的那条证据）。
+
+**改动文件**：`src/OniAiBridge/Buildings.cs`、`src/OniAiBridge/Bridge.cs`、`tools/smoke.ps1`、
+`docs/API.md`（§3.11 / §3.26）、`docs/AI-GUIDE.md`（端点表 + §4.5）、`docs/VERIFIED.md`、`README.md`、三处版本号、本文件。
+
+---
 ## [修正] 0.95.1 / M7.3 —— `blockingDialog` 加白名单：`ResearchScreen` 不再误报（2026-11-18）
 
 **症状（0.95.0）**：`/v1/meta` 在殖民地刚加载完就报

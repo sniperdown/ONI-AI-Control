@@ -10,26 +10,44 @@ namespace OniAiBridge
     /// * **在采集循环里逐项 `Vision.Allow(cell)`**，不是"先全查再 filter"（漏一个出口就泄露全图）；
     /// * **带上 `fogged` 与 `visibility.filteredCount`**，让人一眼看出"这 42 个是全部还是过滤后的"。
     ///
-    /// 字段刻意保持精简（字段越多，AI 读起来越贵）：prefabId / name / x / y / cell / worldId /
-    /// operational / enabled。温度、材料等留到后续版本。
+    /// M6.8a（0.38.1）：只加计时日志，不改行为。三段时间分开打：
+    /// `loopMs`（遍历 + GetCell + Vision.Allow）/ `nameMs`（Catalog.PlainText）/ `jsonMs`（拼字符串）。
     ///
-    /// M6.8a（0.38.1）：**只加计时日志，不改行为**。三段时间分开打：
-    /// * `loopMs` —— 遍历 + `GetCell` + `Vision.Allow`
-    /// * `nameMs` —— `Catalog.PlainText(def.Name)`（疑为"首轮贵"的元凶）
-    /// * `jsonMs` —— 组装 JSON 字符串
-    /// * 另加 `totalItems`（表里总条数，**截断时也能知道全量有多大**）
+    /// **0.96.0：分页改成"对命中集做窗口"，并给出可翻页的总数。**
+    /// 起因：实测大地图 `totalItems=72851`，而 `limit` 上限 2000 ⇒ 一页顶多 2000 条；旧实现里
+    /// `totalItems` 只是"表里有多少个对象"（含被迷雾/坐标框/prefab 滤掉的），调用方**没有可翻页的总数**，
+    /// 于是"取不全"既翻不动、也无法自证翻完了。这一版：
+    /// * `total` = 通过 fog / bbox / prefabId 过滤后的条数 ⇒ 可翻页总数（`ceil(total/limit)` 页）；
+    /// * `offset` 改为**只在命中集上计数**（旧实现先跳 offset 再判 prefab ⇒ 带 `prefabId` 翻页会既漏又重）；
+    /// * `hasMore` / `nextOffset` 直接给下一页入口，`truncated` 保留（= `hasMore`）；
+    /// * 单页只序列化窗口内的那 `limit` 条 ⇒ **7 万条不会一次性进内存**（只算总数，不攒 JSON）；
+    /// * 计数硬等式（与 `tools/smoke.ps1` 同口径）：
+    ///   `scanned = count + skipped + notEmittedDueToLimit + filteredByFog + filteredInvalid + filteredByBox + filteredByPrefab`，
+    ///   且 `total = count + skipped + notEmittedDueToLimit`。
+    ///
+    /// **字段精简（同一版）**：每条的 `name`（本地化中文名）默认**不再返回**，要就显式 `?names=1`。
+    /// 理由是 `Catalog.PlainText(def.Name)` 是整条链上最贵的一次调用（M6.8a 的 `nameMs` 就是为它加的计时），
+    /// 而翻一页要全量扫一遍才能算 `total` ⇒ 旧实现等于每翻一页做 7 万次 LocText。
+    /// 现在 `name` 只在**窗口内**且**显式要求**时才算；`prefabId → name` 的对照可以走 `/v1/catalog`（一次拿全表）。
     /// </summary>
     internal static class BuildingsQuery
     {
         public const int DefaultLimit = 500;
         public const int MaxLimit = 2000;
 
+        /// <param name="offset">在**命中集**（通过 fog / bbox / prefabId 过滤后）里的起点；越界 ⇒ <c>count=0</c>、不报错。</param>
+        /// <param name="limit">本页条数；≤0 ⇒ 默认 500，&gt;2000 ⇒ 2000。</param>
+        /// <param name="prefabId">只留这个 prefab（大小写不敏感）；null/空 = 不过滤。</param>
+        /// <param name="withNames">是否给窗口内每条计算本地化 <c>name</c>（默认 false，见类注释）。</param>
         public static string Query(int offset, int limit, string prefabId,
-                                   bool hasBox = false, int bx0 = 0, int by0 = 0, int bx1 = 0, int by1 = 0)
+                                   bool hasBox = false, int bx0 = 0, int by0 = 0, int bx1 = 0, int by1 = 0,
+                                   bool withNames = false)
         {
             if (offset < 0) offset = 0;
             if (limit <= 0) limit = DefaultLimit;
             if (limit > MaxLimit) limit = MaxLimit;
+            // 窗口右端用 long：offset+limit 都是 int，极端值下会溢出成负数（那时 hasMore 会算反）
+            long windowEnd = (long)offset + limit;
 
             string wantPrefab = string.IsNullOrEmpty(prefabId) ? null : prefabId.Trim();
             // ★ bbox 过滤（M6.35）：顺序不敏感；x0==x1 && y0==y1 的单格查询也必须生效
@@ -38,22 +56,23 @@ namespace OniAiBridge
                 if (bx1 < bx0) { int t0 = bx0; bx0 = bx1; bx1 = t0; }
                 if (by1 < by0) { int t1 = by0; by0 = by1; by1 = t1; }
             }
-            int filteredByBox = 0;
-            int filteredByPrefab = 0;   // prefabId 不匹配（P3）
-            int notEmittedDueToLimit = 0;   // 扫到了但超出 limit 未输出
+            int filteredByBox = 0;          // 落在 bbox 之外
+            int filteredByPrefab = 0;       // prefabId 不匹配（P3）
+            int notEmittedDueToLimit = 0;   // 命中但落在本页窗口之后（= 还有下一页）
             bool fog = Vision.FogOn;
             int scanned = 0;         // 参与扫描的建筑数
             int filteredByFog = 0;   // 被迷雾挡掉（Grid.Visible==0）
             int filteredInvalid = 0; // 算不出有效格子（读不到 ⇒ 与迷雾无关）
-            int skipped = 0;         // 因 offset 跳过的数
+            int skipped = 0;         // 命中但落在本页窗口之前（offset 跳过的）
             int emitted = 0;         // 真正返回的条数（= count）
-            bool truncated = false;
+            bool hasMore = false;    // 后面还有没返回的命中条目（= 旧 truncated）
 
             // ---- M6.8a 计时（只观测，不影响行为）----
             var swTotal = System.Diagnostics.Stopwatch.StartNew();
             var swPhase = System.Diagnostics.Stopwatch.StartNew();
             long loopMs = 0, nameMs = 0, jsonMs = 0, visMs = 0;
-            int total = 0;
+            int rawTotal = 0;   // 合并后表里的总条数（旧 `totalItems`；不是可翻页总数）
+            int total = 0;      // ★ 命中总数（= 可翻页总数）
 
             var sb = new StringBuilder(16384);
             sb.Append("{\"buildings\":[");
@@ -81,17 +100,14 @@ namespace OniAiBridge
                 }
                 catch (System.Exception e) { Log.Warn("[buildings] 枚举施工点失败: " + e.Message); }
                 var items = merged;
-                total = items.Count;
-                Log.Info("[buildings] 开始扫描 totalItems=" + total + "（完工=" + completesCount + " 施工中=" + ucCount + "）"
-                         + " offset=" + offset + " limit=" + limit
+                rawTotal = items.Count;
+                Log.Info("[buildings] 开始扫描 totalItems=" + rawTotal + "（完工=" + completesCount + " 施工中=" + ucCount + "）"
+                         + " offset=" + offset + " limit=" + limit + " names=" + (withNames ? "1" : "0")
                          + " prefabId=[" + (wantPrefab ?? "<null>") + "]");
-                for (int i = 0; i < total; i++)
+                for (int i = 0; i < rawTotal; i++)
                 {
-                    // limit 判定放在"扫描之前"，这样硬等式才精确：
-                    // scanned = count + filteredByFog + filteredInvalid + skipped
-            // 不再早退：`scanned` 必须是全量扫描数（原实现只报"本页处理了几条"，会误导）
-            // 超 limit 的条目继续参与计数，但不进 JSON（计入 notEmittedDueToLimit）
-
+                    // 条件顺序**有意如此**（便宜的在前，且决定总账）：无效格 → 迷雾 → bbox → prefab → 窗口。
+                    // 计数硬等式靠"每条只落进一个桶"来保证，所以任何 continue 之前必须已经记了一笔。
                     Building b = items[i];
                     if (b == null) continue;
                     scanned++;
@@ -106,26 +122,37 @@ namespace OniAiBridge
                     bool allowCell = Vision.Allow(cell);
                     visMs += swPhase.ElapsedMilliseconds;
                     if (!allowCell) { filteredByFog++; continue; }                               // 被迷雾挡掉
-                if (hasBox)
-                {
-                    int cx, cy;
-                    try { Grid.CellToXY(cell, out cx, out cy); } catch { filteredInvalid++; continue; }   // CellToXY 返回 void
-                    if (cx < bx0 || cx > bx1 || cy < by0 || cy > by1) { filteredByBox++; continue; }
-                }
 
-                    if (skipped < offset) { skipped++; continue; }
+                    if (hasBox)
+                    {
+                        int cx, cy;
+                        try { Grid.CellToXY(cell, out cx, out cy); } catch { filteredInvalid++; continue; }   // CellToXY 返回 void
+                        if (cx < bx0 || cx > bx1 || cy < by0 || cy > by1) { filteredByBox++; continue; }
+                    }
 
                     BuildingDef def = null;
                     try { def = b.Def; } catch { }
-                    string pid = null, name = null;
+                    string pid = null;
                     try { pid = def != null ? def.PrefabID : null; } catch { }
-                    // ---- name 阶段计时 ----
-                    swPhase.Restart();
-                    try { name = def != null ? Catalog.PlainText(def.Name) : null; } catch { }
-                    nameMs += swPhase.ElapsedMilliseconds;
 
+                    // ★ 0.96.0：prefab 过滤提到 offset 之前。旧实现用 offset 跳过"还没判 prefab"的条目 ⇒
+                    //   带 prefabId 翻页时会漏（跳过的不该占 offset）也会重（每次扫描顺序相同，但边界不一致）。
                     if (wantPrefab != null && !string.Equals(pid, wantPrefab, System.StringComparison.OrdinalIgnoreCase))
-                    { filteredByPrefab++; swPhase.Restart(); continue; }
+                    { filteredByPrefab++; continue; }
+
+                    // ---- 到这里这条算"命中"：先数总数，再按窗口切片（7 万条也只序列化窗口内那些）----
+                    total++;
+                    if (total <= offset) { skipped++; continue; }        // 窗口之前
+                    if (total > windowEnd) { notEmittedDueToLimit++; hasMore = true; continue; }   // 窗口之后
+
+                    // ---- 只有在窗口内、且调用方要名字时，才付 LocText 的钱 ----
+                    string name = null;
+                    if (withNames)
+                    {
+                        swPhase.Restart();
+                        try { name = def != null ? Catalog.PlainText(def.Name) : null; } catch { }
+                        nameMs += swPhase.ElapsedMilliseconds;
+                    }
 
                     int x = -1, y = -1, worldId = -1;
                     try { x = cell % Grid.WidthInCells; y = cell / Grid.WidthInCells; } catch { }
@@ -150,11 +177,10 @@ namespace OniAiBridge
 
                     // ---- json 阶段计时 ----
                     swPhase.Restart();
-            if (emitted >= limit) { notEmittedDueToLimit++; truncated = true; continue; }
                     if (emitted > 0) sb.Append(',');
                     emitted++;
                     sb.Append("{\"prefabId\":").Append(Snap.Str(pid));
-                    sb.Append(",\"name\":").Append(Snap.Str(name));
+                    if (withNames) sb.Append(",\"name\":").Append(Snap.Str(name));
                     sb.Append(",\"x\":").Append(x).Append(",\"y\":").Append(y);
                     sb.Append(",\"cell\":").Append(cell);
                     sb.Append(",\"worldId\":").Append(worldId);
@@ -183,42 +209,54 @@ namespace OniAiBridge
             catch (System.Exception e)
             {
                 Log.Warn("[buildings] 采集异常（已返回已采集部分）: " + e);
+                hasMore = false;   // 异常时别诱导调用方继续翻（下一页可能是空的同一段）
             }
 
             sb.Append("],\"count\":").Append(emitted);
             sb.Append(",\"offset\":").Append(offset).Append(",\"limit\":").Append(limit);
+            // ★ 0.96.0：可翻页总数 + 下一页入口。`total` 只数命中（fog/bbox/prefab 之后的），
+            //   与 `totalItems`（表里原有对象数）不是一回事，两个都给，别混用。
+            sb.Append(",\"total\":").Append(total);
+            sb.Append(",\"hasMore\":").Append(hasMore ? "true" : "false");
+            sb.Append(",\"nextOffset\":").Append(hasMore ? offset + emitted : -1);   // 没有下一页给 -1（省得调用方判 null）
             sb.Append(",\"scanned\":").Append(scanned);
-            sb.Append(",\"totalItems\":").Append(total);   // M6.8a：**恒给**（截断时也知道全量多大）
-            sb.Append(",\"truncated\":").Append(truncated ? "true" : "false");
+            sb.Append(",\"skipped\":").Append(skipped);
+            sb.Append(",\"totalItems\":").Append(rawTotal);   // M6.8a：表里总条数（**不是**可翻页总数）
+            sb.Append(",\"truncated\":").Append(hasMore ? "true" : "false");   // 向后兼容：与 hasMore 同值
             sb.Append(",\"elapsedMs\":").Append(swTotal.ElapsedMilliseconds);
             sb.Append(",\"timing\":{\"loopMs\":").Append(loopMs)
               .Append(",\"visMs\":").Append(visMs)
               .Append(",\"nameMs\":").Append(nameMs)
               .Append(",\"jsonMs\":").Append(jsonMs).Append('}');
             sb.Append(",\"fogged\":").Append(fog ? "true" : "false");
+            sb.Append(",\"namesIncluded\":").Append(withNames ? "true" : "false");
             sb.Append(",\"filteredByPrefab\":").Append(filteredByPrefab);
+            sb.Append(",\"filteredByBox\":").Append(filteredByBox);
             sb.Append(",\"notEmittedDueToLimit\":").Append(notEmittedDueToLimit);
             sb.Append(",\"filteredByFog\":").Append(filteredByFog);
             sb.Append(",\"filteredInvalid\":").Append(filteredInvalid);
             sb.Append(",\"visibility\":{\"aiEnableFog\":").Append(fog ? "true" : "false");
             sb.Append(",\"filteredByPrefab\":").Append(filteredByPrefab);
+            sb.Append(",\"filteredByBox\":").Append(filteredByBox);
             sb.Append(",\"filteredByFog\":").Append(filteredByFog);
             sb.Append(",\"filteredInvalid\":").Append(filteredInvalid);
-            // 向后兼容：filteredCount = 两者之和（文档里写明它是"和"，不是纯粹的"被迷雾滤掉"）
+            // 向后兼容：filteredCount = 三者之和（文档里写明它是"和"，不是纯粹的"被迷雾滤掉"）
             sb.Append(",\"filteredCount\":").Append(filteredByFog + filteredInvalid + filteredByPrefab);
             sb.Append(",\"rule\":").Append(Snap.Str(fog ? "Grid.Visible[cell] > 0" : "none (omniscient)"))
               .Append('}');
             sb.Append('}');
 
-            Log.Info("[buildings] count=" + emitted + " scanned=" + scanned
-                     + " totalItems=" + total
+            Log.Info("[buildings] count=" + emitted + " total=" + total + " offset=" + offset + " limit=" + limit
+                     + " hasMore=" + hasMore + " scanned=" + scanned + " totalItems=" + rawTotal
                      + " filteredByFog=" + filteredByFog + " filteredInvalid=" + filteredInvalid
-                     + " skipped=" + skipped + " offset=" + offset + " limit=" + limit
-                     + " truncated=" + truncated + " fogged=" + fog
+                     + " filteredByBox=" + filteredByBox + " filteredByPrefab=" + filteredByPrefab
+                     + " skipped=" + skipped + " notEmittedDueToLimit=" + notEmittedDueToLimit
+                     + " names=" + (withNames ? "1" : "0") + " fogged=" + fog
                      + " | 计时 totalMs=" + swTotal.ElapsedMilliseconds
                      + " loopMs=" + loopMs + " visMs=" + visMs + " nameMs=" + nameMs + " jsonMs=" + jsonMs
                      + " prefabFilter=" + (wantPrefab ?? "<none>")
-                     + " | 硬等式 " + (scanned == emitted + filteredByFog + filteredInvalid + filteredByPrefab + skipped + notEmittedDueToLimit ? "OK" : "FAIL"));
+                     + " | 硬等式 " + (scanned == emitted + skipped + notEmittedDueToLimit + filteredByFog
+                                       + filteredInvalid + filteredByBox + filteredByPrefab ? "OK" : "FAIL"));
             return sb.ToString();
         }
     }

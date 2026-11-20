@@ -44,11 +44,24 @@ namespace OniAiBridge
             int okR; bool busyR;
             string fatal = null;
             var rows = new StringBuilder(2048);
+            string pathDiag = null;
 
             bool ran = MainThread.InvokeAdaptive(() =>
             {
                 try
                 {
+                    // 0.99.0: 整条路径一次连完（照抄 UtilityBuildTool.ApplyPathToConduitSystem）
+                    var allReqs = ParseCells(cellsJson);
+                    if (apply)
+                    {
+                        var seq = new System.Collections.Generic.List<int>(allReqs.Count);
+                        for (int k = 0; k < allReqs.Count; k++)
+                        {
+                            int cc = Grid.XYToCell(allReqs[k].X, allReqs[k].Y);
+                            if (Grid.IsValidCell(cc)) seq.Add(cc);
+                        }
+                        pathDiag = WireOps.ConnectPath(seq);
+                    }
                     int idx = 0;
                     foreach (var c in ParseCells(cellsJson))
                     {
@@ -82,52 +95,8 @@ namespace OniAiBridge
                         var mgr = holder.GetNetworkManager();
                         UtilityConnections before = mgr.GetConnections(cell, false);
 
-                        bool applied = true; string err = null; string via2 = null;
-                        if (apply)
-                        {
-                            try
-                            {
-                                // ★ 0.98.2：**先改连接位，再让管理器重新登记节点**。
-                                //   0.98.0 只调 AddConnection + ForceRebuildNetworks，实测结果是
-                                //   "掩码对了、networkId 碎成 0/1/2 三段、电池电量照掉"。
-                                //   游戏在电线 spawn/despawn 时走的是 SetConnections / AddToNetworks，
-                                //   那才是"登记节点 + 标脏重建"的入口。
-                                object item = null;
-                                try { item = go.GetComponent<Wire>(); } catch { }
-                                if (item == null) { try { item = go; } catch { } }
-
-                                if (item != null)
-                                {
-                                    try
-                                    {
-                                        mgr.SetConnections((UtilityConnections)c.Mask, cell, false);
-                                        via2 = "IUtilityNetworkMgr.SetConnections(cell, mask, item)";
-                                    }
-                                    catch (System.Exception es) { err = "SetConnections:" + es.GetType().Name; }
-                                }
-                                if (via2 == null)
-                                {
-                                    // 退路：逐方向 AddConnection
-                                    foreach (var dir in c.Dirs)
-                                    {
-                                        try { mgr.AddConnection(dir, cell, false); }
-                                        catch (System.Exception e1) { err = "AddConnection:" + e1.GetType().Name; applied = false; }
-                                    }
-                                    via2 = "AddConnection(逐方向)";
-                                }
-
-                                // 让管理器重新登记该节点 + 重建拓扑（关键）
-                                if (item != null)
-                                {
-                                    // 注意：**不要** RemoveFromNetworks（它把节点摘掉 ⇒ networkId 变 -1）；
-                                    // 只需要"登记节点 + 标脏"，重建交给 ForceRebuildNetworks。
-                                    try { mgr.AddToNetworks(cell, item, false); } catch (System.Exception ea) { err = "AddToNetworks:" + ea.GetType().Name; }
-                                }
-                                ForceRebuild(mgr);
-                            }
-                            catch (System.Exception e2) { err = e2.GetType().Name + ":" + e2.Message; applied = false; }
-                        }
-
+                        bool applied = true; string err = null;
+                        // 0.99.0: 连接不在这里逐格做（整条路径一次连完，见下），这里只读回状态。
                         UtilityConnections after = mgr.GetConnections(cell, false);
                         // networkId 兜底：直接问 GetNetworkForCell
                         int netId = -1; int netId2 = -1; string netHow = "GetNetworkForCell(cell)";
@@ -147,7 +116,7 @@ namespace OniAiBridge
                             .Append(",\"expected\":").Append((int)c.Mask)
                             .Append(",\"networkId\":").Append(netId)
                             .Append(",\"via\":").Append(Snap.Str(netHow));
-                        if (via2 != null) rows.Append(",\"how\":").Append(Snap.Str(via2));
+
                         if (err != null) rows.Append(",\"error\":").Append(Snap.Str(err));
                         rows.Append('}');
                     }
@@ -161,6 +130,7 @@ namespace OniAiBridge
             sb.Append("{\"apply\":").Append(apply ? "true" : "false");
             sb.Append(",\"ok\":").Append(okCount).Append(",\"failed\":").Append(failCount);
             sb.Append(",\"cells\":[").Append(rows.ToString()).Append(']');
+            if (pathDiag != null) sb.Append(",\"pathDiag\":").Append(Snap.Str(pathDiag));
             sb.Append(",\"note\":").Append(Snap.Str(
                 "apply=false 时只读回当前掩码与 networkId。判据三档：①after==expected ②networkId != -1 且同线一致 ③用电真的通电（自己验证）"));
             sb.Append('}');

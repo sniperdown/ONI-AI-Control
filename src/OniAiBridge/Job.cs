@@ -70,6 +70,7 @@ namespace OniAiBridge
             // 区域路径：x0/y0/x1/y1（框）或 cx/cy（块）都走这里；单格/radius 走下面老代码
             // ★ M6.76（0.92.0）：打标记那批（消毒/清空管道/攻击/捕捉/拖地）
             if (JobMarks.IsMarkType(t0)) return JobMarks.Execute(t0, body, out status, out code, out message, out details);
+            if (t0 == "build" && HasKey(body, "wirePath")) return BuildWirePath(body, out status, out code, out message, out details);
             if (t0 == "dig" && (HasKey(body, "x0") || HasKey(body, "cx"))) return DigRegionExecute(body, out status, out code, out message);
             // M6.13：对象级 type 的区域模式（**不照抄 dig**：格内有歧义就跳过并计数）
             if ((t0 == "deconstruct" || t0 == "harvest" || t0 == "sweep") && HasKey(body, "x0"))
@@ -1141,6 +1142,113 @@ namespace OniAiBridge
                     || ol == ObjectLayer.TravelTube;
             }
             catch { return false; }
+        }
+        /// <summary>
+        /// `build` + `wirePath`：沿路径逐格建线，**建完立刻按游戏配方双向连线**
+        /// （`UtilityBuildTool.ApplyPathToConduitSystem` 的 IL 配方，见 `WireOps`）。
+        /// 走这条而不是"先建后补 /v1/wire"，是因为分两步时游戏可能已经把孤岛网络算过一轮。
+        /// 单格路径不连线（与游戏一致）。
+        /// </summary>
+        static string BuildWirePath(string body, out int status, out string code, out string message, out string details)
+        {
+            status = 200; code = null; message = null; details = null;
+
+            string prefabId = MatchString(body, "prefabId");
+            if (string.IsNullOrEmpty(prefabId)) prefabId = "Wire";
+
+            string matsText = null;
+            {
+                int mi = body.IndexOf("\"materials\"", System.StringComparison.Ordinal);
+                if (mi >= 0)
+                {
+                    int lb = body.IndexOf('[', mi);
+                    if (lb >= 0)
+                    {
+                        int depth = 0;
+                        for (int i = lb; i < body.Length; i++)
+                        {
+                            if (body[i] == '[') depth++;
+                            else if (body[i] == ']') { depth--; if (depth == 0) { matsText = body.Substring(lb, i - lb + 1); break; } }
+                        }
+                    }
+                }
+            }
+
+            // 解析 wirePath: [[x,y],[x,y],...]
+            var pts = new System.Collections.Generic.List<int[]>();
+            {
+                int k = body.IndexOf("\"wirePath\"", System.StringComparison.Ordinal);
+                if (k < 0) { status = 400; code = "BAD_REQUEST"; message = "缺 wirePath"; return null; }
+                int lb = body.IndexOf('[', k);
+                int depth = 0, end = -1;
+                for (int i = lb; i < body.Length; i++)
+                {
+                    if (body[i] == '[') depth++;
+                    else if (body[i] == ']') { depth--; if (depth == 0) { end = i; break; } }
+                }
+                if (end < 0) { status = 400; code = "BAD_REQUEST"; message = "wirePath 括号不匹配"; return null; }
+                string arr = body.Substring(lb, end - lb + 1);
+                int p = 0;
+                while (p < arr.Length)
+                {
+                    int s = arr.IndexOf('[', p);
+                    if (s < 0) break;
+                    int e = arr.IndexOf(']', s);
+                    if (e < 0) break;
+                    string inner = arr.Substring(s + 1, e - s - 1);
+                    var parts = inner.Split(',');
+                    if (parts.Length >= 2)
+                    {
+                        int x, y;
+                        if (int.TryParse(parts[0].Trim(), out x) && int.TryParse(parts[1].Trim(), out y))
+                            pts.Add(new int[] { x, y });
+                    }
+                    p = e + 1;
+                }
+            }
+            if (pts.Count == 0) { status = 400; code = "BAD_REQUEST"; message = "wirePath 为空"; return null; }
+
+            var cells = new System.Collections.Generic.List<int>(pts.Count);
+            var sb = new System.Text.StringBuilder(1024);
+            sb.Append("{\"type\":\"build\",\"wirePath\":true,\"prefabId\":").Append(Snap.Str(prefabId));
+            sb.Append(",\"cells\":[");
+            int okN = 0, failN = 0;
+            for (int i = 0; i < pts.Count; i++)
+            {
+                int x = pts[i][0], y = pts[i][1];
+                string sub = "{\"type\":\"build\",\"prefabId\":" + Snap.Str(prefabId) + ",\"x\":" + x + ",\"y\":" + y + ",\"confirm\":true";
+                if (matsText != null) sub += ",\"materials\":" + matsText;
+                sub += "}";
+
+                int st2; string c2, m2, d2;
+                string one = BuildExecute(sub, out st2, out c2, out m2, out d2);
+                int cc = Grid.XYToCell(x, y);
+                bool placed = one != null && one.IndexOf("\"placed\":true", System.StringComparison.Ordinal) >= 0;
+                if (placed) { okN++; cells.Add(cc); } else failN++;
+                if (i > 0) sb.Append(',');
+                sb.Append("{\"x\":").Append(x).Append(",\"y\":").Append(y)
+                  .Append(",\"ok\":").Append(placed ? "true" : "false");
+                if (!placed) sb.Append(",\"error\":").Append(Snap.Str((c2 ?? "ERROR") + ": " + (m2 ?? "")));
+                sb.Append('}');
+            }
+            sb.Append(']');
+
+            // 建完立刻连线（同一请求内，最接近玩家拖拽的时序）
+            string pathDiag = null;
+            if (cells.Count >= 2)
+            {
+                int okR; bool busyR; string diag = null;
+                bool ran = MainThread.InvokeAdaptive(() => { diag = WireOps.ConnectPath(cells); }, 3000, 15000, out okR, out busyR);
+                pathDiag = ran ? diag : "MAIN_THREAD_BUSY";
+            }
+            else pathDiag = "SINGLE_CELL(单格不连线，与游戏一致)";
+
+            sb.Append(",\"placedOk\":").Append(okN).Append(",\"placedFailed\":").Append(failN);
+            sb.Append(",\"pathDiag\":").Append(Snap.Str(pathDiag));
+            sb.Append(",\"note\":").Append(Snap.Str("沿 wirePath 逐格建线并立刻双向连线（照抄 UtilityBuildTool.ApplyPathToConduitSystem）；单格不连"));
+            sb.Append('}');
+            JsonCheck.Validate(sb.ToString(), "build-wirepath");
+            return sb.ToString();
         }
         static string BuildExecute(string body, out int status, out string code, out string message, out string details)
         {

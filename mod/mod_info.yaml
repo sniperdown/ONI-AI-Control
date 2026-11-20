@@ -2,6 +2,6 @@
 # 游戏主菜单角落显示的是 "U59-744825-S"：U59 = 更新号，744825 = build，-S = 渠道。这里只能填 build 数字。
 minimumSupportedBuild: 744825
 lastWorkingBuild: 744825
-version: 0.98.2
+version: 0.99.0
 APIVersion: 2
 supportedContent: ALL

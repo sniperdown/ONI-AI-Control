@@ -160,6 +160,9 @@ namespace OniAiBridge
             sb.Append(",\"count\":").Append(all.Count);
             sb.Append(",\"counts\":{\"local\":").Append(nLocal).Append(",\"cloud\":").Append(nCloud).Append('}');
             if (cloudErr != null) sb.Append(",\"cloudError\":").Append(Snap.Str(cloudErr));
+            // 0.102.0：装载界面开着时枚举一次殖民地按钮（名字→#i 的字符串桥）
+            var uiEntries = SaveUi.List();
+            sb.Append(",\"uiButtonCount\":").Append(uiEntries.Count);
             sb.Append(",\"saves\":[");
             for (int i = 0; i < all.Count; i++)
             {
@@ -169,7 +172,15 @@ namespace OniAiBridge
                 sb.Append(",\"fileName\":").Append(Snap.Str(e.FileName));
                 sb.Append(",\"source\":").Append(Snap.Str(e.Source));
                 sb.Append(",\"saveDir\":").Append(Snap.Str(e.Base));
-                sb.Append(",\"colony\":").Append("null");
+                string colonyName = SaveUi.ColonyFromRel(e.Rel);
+                sb.Append(",\"colony\":").Append(colonyName == null ? "null" : Snap.Str(colonyName));
+                {
+                    var ui = SaveUi.FindByColony(uiEntries, colonyName);
+                    sb.Append(",\"uiIndex\":").Append(ui == null ? "null" : ui.Index.ToString());
+                    sb.Append(",\"uiName\":").Append(ui == null ? "null" : Snap.Str(ui.Text));
+                    sb.Append(",\"uiMismatch\":").Append(ui == null ? "true" : "false");
+                }
+
                 sb.Append(",\"cycle\":").Append("null");
                 sb.Append(",\"dups\":").Append("null");
                 sb.Append(",\"colonyInfoUnavailable\":").Append(Snap.Str("未解析存档头（.sav 二进制）；如需殖民地名/周期请后续版本加 LoadHeader"));
@@ -184,7 +195,9 @@ namespace OniAiBridge
                 + "（每条带 source=local|cloud、saveDir=它所属的根，file 相对该根）。"
                 + "count 是两者之和，counts 分列；scope 如实写 —— 云目录找不到或枚举失败时写 local-only 并说明原因，不冒充全量。"
                 + "云存档路径形如 cloud_save_files/<steamId>/<殖民地名>/*.sav。"
-                + "POST /v1/save/load 目前整体禁用（501 LOAD_PATH_UNSAFE），file 仅作标识用"));
+                + "POST /v1/save/load 目前整体禁用（501 LOAD_PATH_UNSAFE），file 仅作标识用。"
+                + "0.102.0 起 colony 来自 file 路径第二段（字符串）；uiIndex/uiName 来自装载界面按钮文本，"
+                + "uiMismatch=true 表示对不上（装载界面没开或名字不符）——此时必须停下，别猜。"));
             sb.Append('}');
 
             Log.Info("[saves] local=" + root + " localCount=" + nLocal + " cloud=" + cloudRoot + " cloudCount=" + nCloud + " scope=" + scope);

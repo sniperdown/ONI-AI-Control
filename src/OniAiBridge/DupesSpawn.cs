@@ -24,9 +24,21 @@ namespace OniAiBridge
         {
             status = 200; code = null; message = null;
 
+            // ★ 作弊闸门：本端点生成复制人**绕过打印舱规则**（不消耗打印次数、不走移民流程），
+            //   机制上与游戏 DebugHandler.SpawnMinion 同一条路 ⇒ 必须和 `allowCheats` 一样受门禁：
+            //   `allowCheats == true` 且（沙盒档 / 沙盒激活 / debug 模式）才允许。
+            if (!Gate.CheatsUnlocked)
+            {
+                status = 403; code = Gate.UnavailableCode();
+                message = Gate.UnavailableReason() + "（/v1/dupes/spawn 属于作弊能力：它绕过打印舱，直接调游戏的调试生成路径）";
+                return null;
+            }
+
             int x = Num(body, "x"), y = Num(body, "y");
             bool hasCell = x >= 0 && y >= 0;
             int cell = hasCell ? Grid.XYToCell(x, y) : -1;
+            // 默认走"普通掷点"（isDebugMinion=false）；要调试属性就显式 {"debug":true}
+            bool debugStats = body.IndexOf("\"debug\":true", System.StringComparison.Ordinal) >= 0;
 
             string data = null; string fatal = null;
             int okR; bool busyR;
@@ -74,7 +86,7 @@ namespace OniAiBridge
                     if (!Grid.IsValidCell(cell)) { fatal = "目标格非法: " + cell; return; }
 
                     // 1) 构造 stats（is_starter_minion=false, 无保底特质, isDebugMinion=true 走调试路径）
-                    var stats = new MinionStartingStats(false, null, null, true);
+                    var stats = new MinionStartingStats(false, null, null, debugStats);
 
                     // 2) Deliver 到目标格（它自己完成实例化/定位/激活/Apply）
                     var pos = Grid.CellToPosCBC(cell, Grid.SceneLayer.Move);

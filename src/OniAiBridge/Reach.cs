@@ -154,21 +154,32 @@ namespace OniAiBridge
                                 reason = noFloor ? "no_floor" : "disconnected";
                             }
                         }
-                        sb.Append(",\"reachable\":").Append(reachable ? "true" : "false");
+                        // ★ 0.113.0：**主判据换成游戏自己的 `Navigator.CanReach`**。
+                        //   理由（实测）：我们的 BFS 只走四邻域 + 地板，漏掉一整类真实可走的情况 ——
+                        //   * 对角台阶/斜通道（泥巴区实测：83 个空气格里 14 格游戏说能走而我们说不能）
+                        //   * 跨 1 格间隙（游戏能跳）
+                        //   * 爬 2 格陡坎
+                        //   而且它还会**误判**：梯子顶被天花板压住时我们说能站，游戏说站不住（角色要占高度）。
+                        //   没有 dupe 时才退回 BFS，并如实标注 judge=bfs-fallback（别让上层以为是游戏判据）。
+                        bool? nav = null;
+                        try { nav = Move.AnyCanReach(cell); } catch { }
+                        bool finalReachable = nav.HasValue ? nav.Value : reachable;
+                        string judge = nav.HasValue ? "Navigator.CanReach" : "bfs-fallback";
+                        if (nav.HasValue && !nav.Value && reason == null) reason = "cant_reach";
+                        if (nav.HasValue && nav.Value) reason = null;   // 游戏说能到 ⇒ 不需要补救原因
+                        sb.Append(",\"reachable\":").Append(finalReachable ? "true" : "false");
+                        sb.Append(",\"judge\":").Append(Snap.Str(judge));
+                        sb.Append(",\"bfsReachable\":").Append(reachable ? "true" : "false");
                         sb.Append(",\"dist\":").Append(hasW ? dw.ToString() : (hasL ? dl.ToString() : "null"));
                         sb.Append(",\"reason\":").Append(reason == null ? "null" : Snap.Str(reason));
                         sb.Append(",\"solid\":").Append(solid ? "true" : "false");
-                        // 0.101.1：同时给**游戏自己的判据**（Navigator.CanReach），用来和我们的 BFS 对比
-                        {
-                            var nav = Move.AnyCanReach(cell);
-                            sb.Append(",\"navCanReach\":").Append(nav.HasValue ? (nav.Value ? "true" : "false") : "null");
-                        }
+                        sb.Append(",\"navCanReach\":").Append(nav.HasValue ? (nav.Value ? "true" : "false") : "null");
                         if (liquid || depthKg > 0) sb.Append(",\"liquidDepth\":").Append(depthKg);
                         sb.Append('}');
                     }
                     sb.Append(']');
                     sb.Append(",\"note\":").Append(Snap.Str(
-                        "reachable=true 表示小人现在走得到（不含需要挖掘/搭梯子）。reason: need_ladder=搭梯子能到 / need_dig=实心要挖 / blocked_by_liquid=被液体挡 / disconnected=不连通"));
+                        "reachable 现在是**游戏自己的判据**（Navigator.CanReach，任一小人能到）；judge=bfs-fallback 表示当时没有复制人、用的是我们的四邻域 BFS（会漏对角/跳跃/爬坎，仅作参考）。bfsReachable 保留我们 BFS 的原始结论便于对比。reason 仅在我们判据下有意义：need_ladder/need_dig/blocked_by_liquid/no_floor/disconnected/cant_reach"));
                     sb.Append('}');
                     data = sb.ToString();
                 }
@@ -294,12 +305,23 @@ namespace OniAiBridge
                         else if (solid) reason = "need_dig";
                         else if (liquid || depthKg > 0) reason = "blocked_by_liquid";
                         else reason = "no_floor";
-                        unreachableCount++;
                     }
+                    // ★ 0.113.0：dig/build 里的 reach 标注同样换成**游戏判据**（有 dupe 时）。
+                    //   否则 AI 下标记时看到的仍是"我们的 BFS"，而它会把斜通道/跳跃判成死路。
+                    bool? nav = null;
+                    try { nav = Move.AnyCanReach(cell); } catch { }
+                    bool finalReachable = nav.HasValue ? nav.Value : hasW;
+                    if (nav.HasValue)
+                    {
+                        reason = nav.Value ? null : (reason ?? "cant_reach");
+                    }
+                    if (!finalReachable) unreachableCount++;
                     var xy = Grid.CellToXY(cell);
                     if (n > 0) sb.Append(',');
                     sb.Append("{\"x\":").Append(xy.x).Append(",\"y\":").Append(xy.y)
-                      .Append(",\"reachable\":").Append(hasW ? "true" : "false")
+                      .Append(",\"reachable\":").Append(finalReachable ? "true" : "false")
+                      .Append(",\"judge\":").Append(Snap.Str(nav.HasValue ? "Navigator.CanReach" : "bfs-fallback"))
+                      .Append(",\"bfsReachable\":").Append(hasW ? "true" : "false")
                       .Append(",\"dist\":").Append(hasW ? dw.ToString() : (hasL ? dl.ToString() : "null"))
                       .Append(",\"reason\":").Append(reason == null ? "null" : Snap.Str(reason))
                       .Append('}');

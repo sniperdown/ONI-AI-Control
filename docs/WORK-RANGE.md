@@ -91,3 +91,21 @@ t34 (114,223) 挖掉 (113,226)   dy=+3
 
 理由：现在接口对"够不着"的标记只回 `ok` + `marked=true`，AI 会以为安排好了，
 而标记会被**永久搁置且不会消失**（也没有 cancel 接口清掉它）。
+
+## 六、已实现（0.113.1）
+
+`/v1/reach` 与 dig/build 响应里的 `reach` 标注，每格多了一个 `workPos` 块（**只报能确定的事实**）：
+
+```json
+"workPos": {
+  "standableNeighbors": 2,          // 目标 4 邻里"可站立且游戏判可达"的格数
+  "example": "114,226",
+  "verdict": "will_do"              // 或 no_standable_neighbor
+}
+```
+
+`verdict=no_standable_neighbor` ⇒ 这个标记**永远不会被干**（小人取到 chore 会立刻放弃，标记不消失）。
+样例：(122,211)/(122,212) 正下方是砖 ⇒ `standableNeighbors=0`。
+
+同版本还把 BFS 降级路径补上了"**头顶要空一格**"（复制人占 2 格高），
+理由与证据见 `2026-11-21-实测汇总.md` 第 1 节。

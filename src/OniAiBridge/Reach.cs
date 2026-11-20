@@ -316,6 +316,30 @@ namespace OniAiBridge
                         reason = nav.Value ? null : (reason ?? "cant_reach");
                     }
                     if (!finalReachable) unreachableCount++;
+                    // ★ 0.113.1：这个"活"到底有没有人能来干 ——
+                    //   实测（2026-11-21）：标记挂上就 `marked=true`，但若目标**没有任何可站立的邻格**，
+                    //   小人取到 chore 后会立刻放弃（转 IdleChore），**标记永久留着、永不消失**。
+                    //   例：(122,211)/(122,212) 正下方 (122,213) 是砖 ⇒ 一年也不动；把那格砖清掉后立刻被拆。
+                    //   所以这里只报**能确定的事实**（有无可站立且可达的邻格），不推测更大的作业矩形。
+                    int wsn = 0; string wsnExample = null;
+                    try
+                    {
+                        var wxy = Grid.CellToXY(cell);
+                        int[] nx = { wxy.x + 1, wxy.x - 1, wxy.x, wxy.x };
+                        int[] ny = { wxy.y, wxy.y, wxy.y + 1, wxy.y - 1 };
+                        for (int d2 = 0; d2 < 4; d2++)
+                        {
+                            int nc = Grid.XYToCell(nx[d2], ny[d2]);
+                            if (!Grid.IsValidCell(nc)) continue;
+                            if (!Passable(nc, true)) continue;
+                            bool? nv = null;
+                            try { nv = Move.AnyCanReach(nc); } catch { }
+                            if (nv == false) continue;            // 游戏说站不到
+                            wsn++;
+                            if (wsnExample == null) wsnExample = nx[d2] + "," + ny[d2];
+                        }
+                    }
+                    catch { }
                     var xy = Grid.CellToXY(cell);
                     if (n > 0) sb.Append(',');
                     sb.Append("{\"x\":").Append(xy.x).Append(",\"y\":").Append(xy.y)
@@ -323,6 +347,10 @@ namespace OniAiBridge
                       .Append(",\"judge\":").Append(Snap.Str(nav.HasValue ? "Navigator.CanReach" : "bfs-fallback"))
                       .Append(",\"bfsReachable\":").Append(hasW ? "true" : "false")
                       .Append(",\"dist\":").Append(hasW ? dw.ToString() : (hasL ? dl.ToString() : "null"))
+                      .Append(",\"workPos\":{\"standableNeighbors\":").Append(wsn)
+                      .Append(",\"example\":").Append(wsnExample == null ? "null" : Snap.Str(wsnExample))
+                      .Append(",\"verdict\":").Append(Snap.Str(wsn > 0 ? "will_do" : "no_standable_neighbor"))
+                      .Append('}')
                       .Append(",\"reason\":").Append(reason == null ? "null" : Snap.Str(reason))
                       .Append('}');
                     n++;
@@ -345,7 +373,21 @@ namespace OniAiBridge
             bool ladder = false, pole = false;
             try { ladder = Grid.HasLadder[cell]; } catch { }
             try { pole = Grid.HasPole[cell]; } catch { }
-            if (ladder || pole) return true;          // 梯子/滑杆格本身可通行（垂直移动）
+            // 梯子/滑杆格本身可通行（垂直移动；挂着时对头顶不敏感，所以放在净空检查之前）
+            if (ladder || pole) return true;
+            // ★ 0.113.1：复制人**占 2 格高**，平地站位要求头顶那格非实心。
+            //   实测（2026-11-21）：(113,220) 挖空后头顶 (113,221) 仍是 Dirt ⇒ 游戏 CanReach 判 F；
+            //   把头顶那格也挖掉后立刻变 T。梯子顶被天花板压住同理（(116,212) 案例）。
+            {
+                bool aboveSolid = true;
+                try
+                {
+                    int above = Grid.CellAbove(cell);
+                    if (Grid.IsValidCell(above)) aboveSolid = Grid.Solid[above];
+                }
+                catch { }
+                if (aboveSolid) return false;
+            }
 
             // 需要有地面支撑（下一格实心）—— 与游戏"站在地板上"一致
             int below = Grid.CellBelow(cell);

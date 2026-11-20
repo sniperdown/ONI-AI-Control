@@ -213,6 +213,11 @@ namespace OniAiBridge
             return v.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        public static string D(double v)
+        {
+            if (double.IsNaN(v) || double.IsInfinity(v)) return "null";
+            return v.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+        }
         public static string Str(string s) { return s == null ? "null" : "\"" + Bridge.Escape(s) + "\""; }
     }
 }

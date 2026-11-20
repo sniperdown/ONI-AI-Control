@@ -3276,3 +3276,158 @@ GET /v1/journal                                 # 等价 since=0&limit=20
 * ⚠️ **`/v1/journal` 端点与回放本身未装机**：0.96.1 没有真机样本。装机后按
   `WORKBUDDY-CHANNEL.md` §4 的四步验（reqId 回显 → 同 id 重发看到 `X-Oni-Replayed: 1` 且**没有第二次执行**
   → `/v1/journal` 能查到 → 关掉游戏后客户端 `exit 5` 而不是假装成功）。
+
+---
+
+> ### ⚠️ 通用：状态变化**无法归因**（读任何端点前先知道）
+>
+> **AI 读到的所有状态里都不含"谁改的"这一维** —— 只有"现在是什么样"。
+> 任何变化都可能是 **① 玩家手操 ② 其他 mod ③ 自己上一轮的残留 ④ 游戏自然行为**，而端点无法区分。
+>
+> 记一次真实事故：本 mod 的验证记录里曾把「10 个挖标记被挖穿」写成"殖民地原有标记被挖穿 / 天然验证"，
+> 实际上是**主人自己动手挖的**。现场是人造的，归因错了。
+>
+> **规则**：在把某个变化归因为「系统自然行为」之前，**必须先排除人工操作**。
+> 可做的只有：记录变化前后两次读数 + 时间 + 自己做过什么，**别替"谁做的"下结论**。
+> 这不是本 mod 的 bug —— 游戏侧本来就没有"操作者"字段，这是信息不存在。
+### 3.42 `GET /v1/elements` —— 元素/材料性质（0.97.0）
+
+**是什么**：任意元素的**物理性质字典**。**只给数据，不给推荐**（没有 `recommended` 之类字段）。
+数据**运行时**从 `ElementLoader.elements`（`List<Element>`）读，**不在代码里硬编码元素表**，
+也不写死 wiki 数字 —— 返回的永远是当前这局游戏的真值。
+
+| 用法 | 说明 |
+|---|---|
+| `GET /v1/elements?tag=Cuprite` | 单条全字段（≈1.2 KB） |
+| `GET /v1/elements?tags=Cuprite,SandStone` | 批量（对比材料用）；`missing[]` 报告查不到的 |
+| `GET /v1/elements` | 轻量列表：`tag / name / state / materialCategory / 比热 / 导热`（≈28 KB，212 条） |
+
+**单条字段**（实测 Cuprite）：
+
+```json
+{"tag":"Cuprite","name":"铜矿","state":"Solid","dlcId":"","disabled":false,
+ "materialCategory":"Metal","oreTags":["Ore","BuildableAny","StartingMetalOre","Solid","Metal"],
+ "specificHeatCapacity":0.386,"specificHeatCapacityUnit":"DTU/(g*C)",
+ "thermalConductivity":4.5,"thermalConductivityUnit":"DTU/(m*s*C)",
+ "molarMass":143.09,"molarMassUnit":"g/mol",
+ "lowTempK":null,"lowTempC":null,"lowTempTransitionTarget":null,
+ "highTempK":1357,"highTempC":1083.85,"highTempTransitionTarget":"MoltenCopper",
+ "maxMass":1840,"maxMassUnit":"kg/cell","strength":0.7,"hardness":25,
+ "defaultMass":800,"defaultMassUnit":"kg/cell","defaultTemperatureK":300,"defaultTemperatureC":26.85,
+ "lightAbsorptionFactor":1,"radiationAbsorptionFactor":0.56,"radiationPer1000Mass":0,"toxicity":0,
+ "attributeModifiers":[{"attributeId":"Decor","value":0.1,"isMultiplier":true,"display":"Decor x1.1"}]}
+```
+
+要点：
+* **温度双给**：`lowTempK`/`lowTempC`、`highTempK`/`highTempC`、`defaultTemperatureK`/`defaultTemperatureC`。
+  内部单位是 K；`0` 或负值表示该方向没有相变 ⇒ 给 `null`。
+* `name` 已去掉 Klei 富文本（`<link="CUPRITE">铜矿</link>` → `铜矿`）。
+* `attributeModifiers` 是**事实**（这个材料给什么加成），不是推荐：`Decor x1.1` = 装饰 ×1.1。
+* `dlcId` 为空串 = 本体内容；DLC 专属元素**不过滤**，靠这个字段判断"你这一档有没有"。
+* **相变温度不随气压变化**（压力只影响受压破坏），详见 [`ELEMENTS-DESIGN.md`](ELEMENTS-DESIGN.md) §2。
+
+---
+
+### 3.43 `GET /v1/build-materials?prefabId=Electrolyzer` —— 这个建筑能用哪些材料（0.97.0）
+
+**为什么要有**：`build` 不传 `materials` 时走 `def.DefaultElements()`（该建筑的**默认一项**），
+**那个默认项不保证库存里有**。盲测实录：Tile 的默认项是 `Isoresin`（本档 0 kg），
+API 返回 `placed=true`，但那栋蓝图**永远建不完**。根因不是 API 坏了，是**调用方不知道还有别的材料可选**。
+
+**候选集怎么来的**：直接调**游戏 UI 同一个方法** `MaterialSelector.GetValidMaterials(类别Tag, false)`，
+按 `def.MaterialCategory` 逐个类别取并集 ⇒ 返回的候选与玩家在建造菜单里看到的**完全一致**。
+（不要自己按 `Element.materialCategory` 筛：Electrolyzer 自筛只有 13 条，UI 给 17 条，
+ 多出 `Steel`/`Niobium`/`Iridium`/`TempConductorSolid` 这类 `BuildableAny` 材料；Tile 自筛会漏掉 `Isoresin`。）
+
+**穷举口径**：类别内**全部列出** —— 本档 0 kg 的、未解锁的都列。**只列够的会让调用方连"能换材料"都不知道。**
+
+```json
+{"prefabId":"Electrolyzer","name":"电解器","needKg":200,"materialCategories":["Metal"],
+ "counts":{"total":17,"enough":1,"short":16,"unlocked":1},
+ "candidateSource":"MaterialSelector.GetValidMaterials（与游戏 UI 同一套）",
+ "materials":[
+   {"tag":"Cuprite","available":{"inStorage":114.904,"onGround":5583.559,"total":5698.463},
+    "need":200,"enough":true,"unlocked":true,"props":{ …与 /v1/elements 单条同构… }},
+   {"tag":"ZincOre","available":{"inStorage":0,"onGround":0,"total":0},
+    "need":200,"enough":false,"unlocked":false,"props":{ … }}
+ ]}
+```
+
+* **排序**：`enough=true` 在前，组内按 tag 名。排序**不影响"全部列出"**。
+* `available.inStorage` = 箱子里的量；`onGround` = 地上散落（小人能捡起来用）；
+  `total = 两者之和`，与 `INSUFFICIENT_MATERIAL` 的 `have` 同口径。
+* **`discovered`**（0.97.2 由 `unlocked` 改名）= **该资源是否曾进入本档的 `WorldInventory` 账本。**
+  `false` = 本档还没进过账本，**不是「没研究解锁」**；研究状态请查 `/v1/research`。
+  每个响应都带 `discoveredMeaning` 字段重复这句自解释。
+
+* `inWorld` 是**同一本账的「数量」读数**，与 `discovered`（「存在性」读数）是**同一事件的两条观测**，
+  **不是互为因果**。真实结构（这是整件事的核心）：
+
+  ```
+  掉落
+   └─ WorldInventory 注册 fetchable      ← 中心事件
+        ├─ GetAmount(tag) 因此 +N        ← 数量读数（inWorld）
+        └─ OnAddedFetchable → Discover   ← 存在性读数（discovered）
+  ```
+
+* `inWorldUnavailable=true` **不是读取失败**，是**我们自己**的判定（`Inventory.cs` L122）：
+  **账本说 0 但地上有货 ⇒ 不信任这个 0，显示成 `null` 而不是 `0`**。
+  这条不是游戏行为，也不是 mod 之外的任何东西。
+
+* **实证（2026-11-20 反向验证；读数与证据等级分开标）**：
+  * 【实测读数】挖前 `IgneousRock`：`GetAmount` 返回 **0**（本档显示 `inWorld:null`）、
+    `onGround=9406.786`、`discovered=false`；挖穿一格掉 920kg 后，**同一轮**读到：
+    `onGround=10326.786`、`inWorld=`**920**、`discovered=`**true**、`inStorage` 仍 **0**。
+  * 【IL 可读】`WorldInventory.OnAddedFetchable` 方法体内直接调
+    `DiscoveredResources.Discover` + `GetCategoryForEntity`。
+  * 【**推断，未抓到实锤**】「**掉落 → `OnAddedFetchable`**」这最后一跳：全程序集**没有直接调用点**
+    （token 扫描 0 命中），疑似**事件/委托注册**，扫不到 ⇒ 别当实锤引用。
+  * 结论边界：「**入箱不是必要条件**」有实测支撑（`inStorage=0` 时已 `true`）；
+    「掉落即注册」是**推断**。
+
+* ⚠️ `onGround` ≠ `inWorld`：同一个 tag 可以「地上 9406 kg、账本 0」——
+  **"地图里有"不等于 `discovered:true`**，判据只有"进过账本"。
+* 性能：Electrolyzer 17 条 ≈ 16 KB / 6–17 ms。
+
+#### 3.43.1 建造两步走（**新流程，盲测就是漏了第一步**）
+
+```bash
+# 1) 先查：这个建筑能用什么材料、哪个够
+curl -sS -H "X-Oni-Token: $TOKEN" "http://127.0.0.1:8770/v1/build-materials?prefabId=Tile"
+#    在 materials[] 里挑一个 enough=true 的 tag（如 SandStone）
+
+# 2) 再建：把选中的材料传进去
+curl -sS -H "X-Oni-Token: $TOKEN" -X POST -H 'Content-Type: application/json' \
+     -d '{"type":"build","prefabId":"Tile","x":119,"y":215,"confirm":true,"materials":["SandStone"]}' \
+     "http://127.0.0.1:8770/v1/job"
+```
+
+⚠️ **不传 `materials` ⇒ 用 `DefaultElements()` 的默认项，可能本档 0 kg**（Tile→Isoresin、Electrolyzer→ZincOre），
+而 API 仍返回 `placed=true`（材料不足不阻塞蓝图是 M6.56 的设计）。**判断建得成不成，看 `enough`，不看 `placed`。**
+
+#### 3.43.2 `build` 响应里的 `candidates`（0.97.1）
+
+**信息要放在必经之路上**：调用方没查 `/v1/build-materials` 也可能直接 `build`，所以下面两种情况下
+**`build` 的响应里自动带一份轻量候选清单**：
+
+1. **没传 `materials`**（走 `DefaultElements()` 默认项 —— 最容易翻车的场景）
+2. **传了但 `enough=false`**（选的材料本档不够）
+
+传了足够的材料时**不附**（响应保持轻量，Tile 约 1.9 KB vs 带清单约 3.7 KB）。
+
+```json
+{"placed":true,"materialsUsed":"Isoresin",
+ "materials":{"need":[{"category":"BuildableRaw","kg":200}],"enough":false,...},
+ "candidates":[{"tag":"Obsidian","available":{"inStorage":400,"onGround":0,"total":400},"enough":true,"unlocked":false},
+               {"tag":"SandStone","available":{"inStorage":9156.41,"onGround":25869.171,"total":35025.582},"enough":true,"unlocked":true},
+               {"tag":"Isoresin","available":{"inStorage":0,"onGround":0,"total":0},"enough":false,"unlocked":false},
+               …],
+ "candidatesMeta":{"total":16,"enough":4,
+   "reason":"没传 materials，用的是 DefaultElements() 默认项；以下是这个建筑的全部合法材料",
+   "note":"备选清单，不是推荐；排序为够的在前。unlocked 来自 DiscoveredResources.IsDiscovered，实测存疑（有库存也可能为 false），别当硬判据"}}
+```
+
+* 轻量：只有 `tag` / `available` / `enough` / `unlocked`，**不带 `props`** —— 要性质再查 `/v1/elements`
+* 顺序与 `/v1/build-materials` 一致（够的在前）
+* **不是推荐结论**，没有 `recommended`；未解锁的、0kg 的照样列
+* 只在这个响应里加字段，`build` 其余行为（`placed`、不阻塞蓝图）**没动**

@@ -38,7 +38,31 @@ curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/meta
 
 1. **token 是全量校验**：即使从 `127.0.0.1` 发请求，不带 `X-Oni-Token` 也是 `401`。
 2. **键名是小写 `"token"`**，不是 `"Token"`；按大写找会拿到空串然后一路 401。
-3. **写操作先 `dryRun`**：所有会改状态的接口都有 `dryRun`/`validateOnly` 分支，先看再动。
+3. **写操作先 `dryRun`（但只对部分接口有效）**：`dryRun` **只在**打标记批次（`/v1/job` 的
+   `disinfect`/`empty_pipe`/`attack`/`capture`/`mop`）、`/v1/command {"op":"pipeLink"}`、`/v1/ui/click` 上生效。
+   **`dig` / `deconstruct` / `harvest` / `sweep` / `build` 不认 `dryRun`** —— 单格 dig 带了 `dryRun:true` 也会
+   **真的**打出挖掘标记（【实测 2026-11-20】10 格 dryRun ⇒ 地图上真的多了 10 个 `DigPlacer`，N 从 13 变 23），
+   区域 dig 则要求 `confirm:true`。别把 `dryRun` 当成通用保险。
+4. **建造必须两步走（0.97.0 起）**：先 `GET /v1/build-materials?prefabId=X` 看候选材料 + `enough`，
+   再 `POST /v1/job type=build` **必须带 `"materials":["<选中的 tag>"]`**。
+   不传就用 `DefaultElements()` 默认项，**可能本档 0kg**（Tile→Isoresin、Electrolyzer→ZincOre），
+   而 API 仍返回 `placed=true` —— 那栋蓝图会**永远建不完**。判据看 `enough`，不看 `placed`。
+   **兜底（0.97.1）**：万一手快没查就 `build`，响应在「没传 materials」或「传了但不够」时会自带
+   `candidates[]`（`tag` / `available` / `enough` / `discovered`，够的在前）—— 那就是给你换材料的清单；
+   带了足够材料时**不附**。
+5. **`discovered` 的语义**：= **该资源是否曾进入本档的 `WorldInventory` 账本**（不是"地图里有"，
+   也不是"研究解锁"）。**入箱不是必要条件**（实测 `inStorage=0` 时已 `true`）。
+   `inWorld` 是同一本账的「数量」读数，与它是**同一事件的两条观测，不是互为因果**；
+   `inWorldUnavailable=true` 是**我们自己**的判定（账本说 0 但地上有货 ⇒ 不显示 0 而显示 null），
+   不是读取失败。
+6. **查材料性质用 `/v1/elements`**：温度给 K 和 °C 双份（`highTempK` / `highTempC`），
+   `attributeModifiers` 是"这个材料给什么加成"的事实（`Decor x1.1`），**不是推荐**。
+7. **证据要分等级标**：「**实测读数**」（真机读到数字）/「**IL 可读**」（反编译能看到的方法体）/
+   「**推断**」（没抓到直接证据的猜想）三种必须分开写。**别把推断写成实锤** ——
+   曾经把 `inStorage` 变化当成 `discovered` 翻真的原因，就是因为没分等级。
+8. **状态变化无法归因**：你读到的状态里**没有"谁改的"** —— 玩家手操 / 别的 mod / 你上一轮的残留 /
+   游戏自然行为，端点一律区分不了。**把变化说成"系统自然发生的"之前，先排除人工操作**；
+   能写的只有"变化前后两次读数 + 时间 + 我做了什么"。这是信息不存在，不是 bug。
 
 ---
 
@@ -111,7 +135,9 @@ curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/health
 |---|---|---|---|
 | GET | `/v1/catalog` | 建筑目录（prefabId、尺寸、材料） | 找 `prefabId` 用这个 |
 | GET | `/v1/build-menu` | 当前建造菜单可见项 | 界面态 |
-| GET | `/v1/materials` | 材料清单 | 建造选材 |
+| GET | `/v1/materials` | 材料清单（**箱子里的量**） | 看库存 |
+| GET | `/v1/elements?tag=Cuprite` | **元素性质字典**（比热/导热/相变/硬度/强度/加成…） | 查任意材料性质 |
+| GET | `/v1/build-materials?prefabId=Tile` | **这个建筑能用哪些材料** + 本档实况（穷举，含 0kg） | **建东西前必查** |
 | GET | `/v1/research` | 科技树状态 | |
 | POST | `/v1/job {"type":"build",...}` | 建造 | 玩家等价路径；`confirm:true` 才动手 |
 | POST | `/v1/job {"type":"research",...}` | 设研究方向 / 直接完成（后者作弊） | |
@@ -313,8 +339,9 @@ REQ="wb-$(date +%Y%m%d%H%M%S)-$RANDOM"
 curl -sS --max-time 8 --retry 2 --retry-delay 1 \
      -H "X-Oni-Token: $TOKEN" -H "X-Oni-Req-Id: $REQ" \
      -X POST -H 'Content-Type: application/json' \
-     -d '{"type":"dig","x":111,"y":220,"dryRun":true}' \
+     -d '{"type":"mop","x":111,"y":220,"dryRun":true}' \
      "http://127.0.0.1:8770/v1/job"
+# 注意：这里示例故意用 mop（支持 dryRun）。dig **不支持** dryRun —— 带 dryRun 也会真打标记。
 # 没拿到响应 ⇒ 先查账，别急着重发：
 curl -sS -H "X-Oni-Token: $TOKEN" "http://127.0.0.1:8770/v1/journal?reqId=$REQ"
 ```

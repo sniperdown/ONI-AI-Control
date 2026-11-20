@@ -1989,6 +1989,30 @@ namespace OniAiBridge
                     sbp.Append(",\"hint\":").Append(Snap.Str(
                         "箱里 " + haveKg.ToString("0.###") + "kg，地上 " + (groundKg >= 0 ? groundKg.ToString("0.###") : "?") + "kg，合计 " + total3.ToString("0.###") + "kg（enough 仅供参考，不参与放行）"));
                     sbp.Append("}");
+                    // ★ 0.97.1：材料清单别只在"想查才查"的地方 —— 就放必经之路上。
+                    //   两种情况附：①没传 materials（走 DefaultElements 默认项，最容易翻车）②传了但不够。
+                    //   只给 tag/available/enough/unlocked（**不带 props**，要性质去 /v1/elements）。
+                    bool wantCandidates = (matNames.Count == 0) || (!enough3 && needKg > 0);
+                    if (wantCandidates)
+                    {
+                        try
+                        {
+                            BuildingDef defC = null; try { defC = Assets.GetBuildingDef(prefabId); } catch { }
+                            int cTotal, cEnough;
+                            string cand = BuildMaterials.LightList(defC, needKg, out cTotal, out cEnough);
+                            if (cand != null)
+                            {
+                                sbp.Append(",\"candidates\":").Append(cand);
+                                sbp.Append(",\"candidatesMeta\":{\"total\":").Append(cTotal).Append(",\"enough\":").Append(cEnough)
+                                   .Append(",\"reason\":").Append(Snap.Str(matNames.Count == 0
+                                       ? "没传 materials，用的是 DefaultElements() 默认项；以下是这个建筑的全部合法材料"
+                                       : "传了 materials 但本档不够；以下是这个建筑的全部合法材料"))
+                                   .Append(",\"note\":").Append(Snap.Str("备选清单，不是推荐；排序为够的在前。discovered=该资源是否已进入本档的『资源发现』账本（真正获得过：收进世界库存/被建筑消耗/模板发放）；false 表示本档还没获得过这种资源，不等于没研究解锁（研究看 /v1/research）"))
+                                   .Append("}");
+                            }
+                        }
+                        catch { }
+                    }
                 }
                 sbp.Append(",\"underConstruction\":").Append(underConstruction ? "true" : "false");
                 sbp.Append(",\"requestedCell\":").Append(cell);

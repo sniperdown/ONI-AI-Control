@@ -16,8 +16,8 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.96.1";
-        public const string Stage = "M7.4";
+        public const string ModVersion = "0.97.2";
+        public const string Stage = "M7.5";
 
         static BridgeSettings settings;
         static TcpListener listener;
@@ -196,6 +196,25 @@ namespace OniAiBridge
                     return;
                 case "/v1/debug/mods": HandleDebugMods(client); return;   // 诊断：不放进公共 /v1/meta
                 case "/v1/catalog": HandleCatalog(client); return;   // M5.2 只读建筑目录
+                case "/v1/build-materials":
+                    // 0.97.0：这个建筑能用哪些材料（穷举，含本档 0kg 的）+ 本档实况（只读、纯数据）
+                    if (method != "GET") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use GET")); return; }
+                    {
+                        int stBm; string cBm, mBm;
+                        string dBm = BuildMaterials.Query(query, out stBm, out cBm, out mBm);
+                        if (dBm == null) WriteJson(client, stBm, Error(cBm ?? "ERROR", mBm ?? "unknown"));
+                        else WriteJson(client, 200, Ok(dBm));
+                        return;
+                    }                case "/v1/elements":
+                    // 0.97.0：材料/元素性质（运行时遍历 ElementLoader，只读、纯数据）
+                    if (method != "GET") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use GET")); return; }
+                    {
+                        int stE; string cE, mE;
+                        string dE = Elements.Query(query, out stE, out cE, out mE);
+                        if (dE == null) WriteJson(client, stE, Error(cE ?? "ERROR", mE ?? "unknown"));
+                        else WriteJson(client, 200, Ok(dE));
+                        return;
+                    }
                 case "/v1/debug/vision-sample": HandleVisionSample(client, query); return;   // 一次性诊断（验完可删）
                 case "/v1/ui/click":
                     if (method != "POST") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use POST")); return; }
@@ -945,7 +964,7 @@ namespace OniAiBridge
             // M6.89：`/v1/map` 已实现，这里必须**如实上报 allowMap**（原来是硬编码 false = 谎言）。
             // 注意 capabilities 是"端点存在 + 当前闸门允许"，`map:false` 表示 allowMap 关着，端点本身存在。
             sb.Append(",\"map\":").Append((settings != null && settings.AllowMap) ? "true" : "false");
-            sb.Append(",\"catalog\":true}");
+            sb.Append(",\"catalog\":true,\"elements\":true}");
             sb.Append(",\"aiEnableFog\":").Append(Vision.FogOn ? "true" : "false");
             sb.Append(",\"allowMap\":").Append((settings != null && settings.AllowMap) ? "true" : "false");
             sb.Append(",\"mapLimits\":{\"maxSide\":").Append(MapQuery.MaxSide)

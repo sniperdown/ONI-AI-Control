@@ -89,12 +89,41 @@ namespace OniAiBridge
         /// <summary>取该格（Wire 层）的网络管理器。</summary>
         internal static IUtilityNetworkMgr ManagerAt(int cell)
         {
+            // 0.99.1：**先找 Wire 层，再找 Building 层**。
+            //   实测：刚放下的电线是**蓝图**（在建），它不在 Wire 层而在 Building 层，
+            //   只查 Wire 层会全部 NO_MGR（这就是 wirePath 连线全失败的原因）。
             try
             {
-                var go = Grid.Objects[cell, (int)ObjectLayer.Wire];
-                if (go == null) return null;
-                var h = go.GetComponent<IHaveUtilityNetworkMgr>();
-                return h != null ? h.GetNetworkManager() : null;
+                // ★ 0.99.2：管理器是**全局**的 `Game.Instance.electricalConduitSystem`
+                //   （`Wire.OnSpawn` 里就是这么拿的），**不是**从格子上的对象取组件——
+                //   刚放下的电线是蓝图、身上没有网络管理器，所以之前全 NO_MGR。
+                try
+                {
+                    var gm = Game.Instance;
+                    if (gm != null)
+                    {
+                        var sys = gm.electricalConduitSystem;
+                        if (sys != null)
+                        {
+                            var asMgr = sys as IUtilityNetworkMgr;
+                            if (asMgr != null) return asMgr;
+                        }
+                    }
+                }
+                catch { }
+                var layers = new int[] { (int)ObjectLayer.Wire, (int)ObjectLayer.Building };
+                for (int i = 0; i < layers.Length; i++)
+                {
+                    var go = Grid.Objects[cell, layers[i]];
+                    if (go == null) continue;
+                    var h = go.GetComponent<IHaveUtilityNetworkMgr>();
+                    if (h != null)
+                    {
+                        var m = h.GetNetworkManager();
+                        if (m != null) return m;
+                    }
+                }
+                return null;
             }
             catch { return null; }
         }

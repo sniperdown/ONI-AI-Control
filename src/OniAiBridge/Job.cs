@@ -1379,6 +1379,12 @@ namespace OniAiBridge
                                         var ucP = gP.GetComponent<BuildingUnderConstruction>();
                                         var bcP = gP.GetComponent<Building>();
                                         if (ucP == null && bcP == null) continue;
+                                        // 0.99.1: 管线/电线类占用者不算占用（机器格内本来就该有电线）
+                                        {
+                                            BuildingDef occDef = null;
+                                            try { occDef = ucP != null ? ucP.Def : (bcP != null ? bcP.Def : null); } catch { }
+                                            if (IsUtilityLayerPrefab(occDef)) continue;
+                                        }
                                         occupiedCell = ccP;
                                         if (ucP != null) { occupiedUnderConstruction = true; try { occupiedPrefab = ucP.Def != null ? ucP.Def.PrefabID : null; } catch { } }
                                         else { try { occupiedPrefab = bcP.Def != null ? bcP.Def.PrefabID : null; } catch { } }
@@ -1545,6 +1551,12 @@ namespace OniAiBridge
                                             var ucPre = gPre.GetComponent<BuildingUnderConstruction>();
                                             var bcPre = gPre.GetComponent<Building>();
                                             if (ucPre == null && bcPre == null) continue;
+                                            // 0.99.1: 管线/电线类占用者不算占用（机器格内本来就该有电线）
+                                            {
+                                                BuildingDef occDef = null;
+                                                try { occDef = ucPre != null ? ucPre.Def : (bcPre != null ? bcPre.Def : null); } catch { }
+                                                if (IsUtilityLayerPrefab(occDef)) continue;
+                                            }
                                             occupiedCell = ccPre;
                                             if (ucPre != null)
                                             {

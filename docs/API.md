@@ -3437,28 +3437,30 @@ curl -sS -H "X-Oni-Token: $TOKEN" -X POST -H 'Content-Type: application/json' \
 
 ---
 
-### 3.44 `POST /v1/wire` —— 批量设电线连接位（0.98.0；**能力有限，见警告**）
+### 3.44 建电网：`build` + `wirePath`（0.99.x，**实测能通电**）
 
 ```json
-POST /v1/wire
-{"cells":[{"x":121,"y":217,"connect":"left,right"},{"x":120,"y":217,"mask":3}],"confirm":true}
+POST /v1/job
+{"type":"build","prefabId":"Wire","wirePath":[[112,204],[113,204],[114,204],[115,204],[116,204],[117,204]],
+ "confirm":true,"materials":["Cuprite"]}
 ```
 
-返回每格 `before` / `after` / `expected` / `networkId` / `how`。
+* 沿路径逐格建线，**建完立刻按游戏原配方双向连线**（照抄 `UtilityBuildTool.ApplyPathToConduitSystem`，
+  IL 已核）：`DirectionFromToCell` → 双向 `CanAddConnection` → 双向 `AddConnection`。
+* 返回：`placedOk` / `placedFailed` / `pathDiag`（每对 `CONNECTED(dir/inv)`）、每格 `ok`。
+* **单格不连线**（`mask=0` 孤岛，与游戏行为一致）；要连必须 ≥2 格。
+* 建线是蓝图：**建成前 `networkId=-1`**（正常，不是失败）；等小人建完后同一网络的格子 `networkId` 相同。
 
-#### ⚠️ 能力边界（2026-11-20 实测，**别误用**）
+#### 能力边界（2026-11-20 实测）
 
-| 能做的 | 做不到的 |
+| 能做 | 做不到 |
 |---|---|
-| 改已有电线的**连接位**（掩码） | **让线并入 / 重建电网** |
-| 读回 `GetConnections` 与 `GetNetworkForCell` | 让断开的网络重新连通 |
-| `connect:"left,right"` 走 `(int)UtilityConnections` 位值（left+right=3） | 让新 spawn 的线自动连相邻（spawn 出来就是 `mask=0` 孤岛） |
+| 从零布线，路径内相邻格互相连通 | **连到路径外的既有电网**（游戏的 `CheckForConnection` 还没抄） |
+| 建成后一条网、能通电（电池实测 0 → 5656 J，dupe 有 `GeneratePower` chore） | "断开→接回"这种修复场景（已注册到不同网络的两格之间不会 merge） |
 
-**实测后果**：调完 `SetConnections + AddToNetworks + ForceRebuildNetworks` 后，
-掩码能写对，但 `networkId` 会碎成多段（0/1/2…），**电池 `joules` 继续下降**；
-更有甚者该格会从网络里掉出来（`GetConnections` 直接读不到）。
+#### `POST /v1/wire`（辅助：读掩码 + 按同一配方修补）
 
-**根因**：游戏放线走的是 `Wire.OnSpawn → Game.Instance.electricalConduitSystem.AddToNetworks(cell, this, false)`
-再配合建造工具设连接位；手动拼管理器层积木，顺序/时机错一个就不生效。
+`{"cells":[{"x":113,"y":204},{"x":114,"y":204}],"confirm":true}` —— `cells` 顺序当 path 用，
+走同一个配方；`confirm` 省略时只读。返回每格 `before/after/networkId` + `pathDiag`。
 
-**判断电有没有通**：只能看电池 `joules` 是否在涨（`/v1/buildings`），**不能看 `operational`**。
+**判断电有没有通**：只能看电池 `joules` 是否在涨（`/v1/buildings`）；**`operational` 不表示通电**。

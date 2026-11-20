@@ -36,14 +36,18 @@ curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/meta
 
 **三个最容易踩的坑，现在就记住**：
 
-0. **⚠️ 别指望 `/v1/wire` 帮你修电网（0.98.2 实测，会骗人）**
-   * **单格 `build` 建出来的 Wire 永远是 `mask=0`、自己一个网络**（不自动连相邻）——实测在「第七次重启」建线，spawn 后 `networkId` 是新的孤岛号。
-   * `/v1/wire` **只能改连接位**（掩码能写对），**不能让线并入或重建电网**。
-   * 更糟：调完之后该格可能**从网络里掉出来**（`GetConnections` / `GetNetworkForCell` 直接读不到）。
-   * ⇒ **盲测里"搭电网"这条路目前走不通**；要判断电有没有通，只能看电池 `joules`（见下一条）。
-   * 根因：游戏在放线时走的是 `Wire.OnSpawn → electricalConduitSystem.AddToNetworks(cell, this, false)` + 建造工具设连接位，
-     而我们在管理器层手动拼 `AddConnection` / `SetConnections` / `AddToNetworks` / `ForceRebuildNetworks`，
-     顺序或时机错一个就不生效（已实测：掩码对、`networkId` 碎成多段、电量照掉）。
+0. **建电网正确的是 `build` + `wirePath`（0.99.x 起，实测能通电）**
+   ```json
+   {"type":"build","prefabId":"Wire","wirePath":[[112,204],[113,204],...,[117,204]],"confirm":true,"materials":["Cuprite"]}
+   ```
+   * **一次请求给整条路径**：逐格建线，**建完立刻按游戏原配方双向连线**
+     （`DirectionFromToCell` → 双向 `CanAddConnection` → 双向 `AddConnection`；
+     出处 `UtilityBuildTool.ApplyPathToConduitSystem`，IL 已核）。
+   * 返回里看 `pathDiag`（每对 `CONNECTED(dir/inv)` 或 `NO_MGR`/`CANNOT_ADD(guard)`）。
+   * **单格 build 不连线**（`mask=0` 孤岛，与游戏一致）；要连就必须给 ≥2 格的 `wirePath`。
+   * 建成后可用 `/v1/wire` 读掩码与 `networkId` 复核；**所有格子 `networkId` 相同 = 一条网**。
+   * ⚠️ 建线是蓝图，要等小人建完（几秒到一分多钟）才会进网络；**蓝图阶段 `networkId` 是 -1，别误判为失败**。
+   * ⚠️ 目前**不会连到路径外的既有电网**（游戏拖拽有这一步，我们还没抄）；从零布线够用。
 0. **⚠️ `operational=true` 不代表通电！**（最容易骗到结论的一条）
    `operational` 是 `Operational.IsOperational` = "**建筑完好、在运转**"，**缺电时照样是 true**。
    判断"电有没有通"只能看：**电池 `joules` 是否在涨**（`/v1/buildings` 的 `joules` / `joulesCapacity`）、

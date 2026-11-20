@@ -84,15 +84,22 @@ namespace OniAiBridge
                             failCount++; continue;
                         }
 
-                        IHaveUtilityNetworkMgr holder = null;
-                        try { holder = go.GetComponent<IHaveUtilityNetworkMgr>(); } catch { }
-                        if (holder == null)
+                        // 0.99.2：管理器用**全局**的（蓝图阶段对象上没有管理器），
+                        //   先 WireOps.ManagerAt（内部走 Game.Instance.electricalConduitSystem），
+                        //   再退回组件查找。
+                        var mgr = WireOps.ManagerAt(cell);
+                        if (mgr == null)
+                        {
+                            IHaveUtilityNetworkMgr holder0 = null;
+                            try { holder0 = go.GetComponent<IHaveUtilityNetworkMgr>(); } catch { }
+                            if (holder0 != null) mgr = holder0.GetNetworkManager();
+                        }
+                        if (mgr == null)
                         {
                             rows.Append((idx > 1 ? "," : "")).Append("{\"x\":").Append(c.X).Append(",\"y\":").Append(c.Y)
                                 .Append(",\"applied\":false,\"reason\":\"NO_NETWORK_MGR\"}");
                             failCount++; continue;
                         }
-                        var mgr = holder.GetNetworkManager();
                         UtilityConnections before = mgr.GetConnections(cell, false);
 
                         bool applied = true; string err = null;

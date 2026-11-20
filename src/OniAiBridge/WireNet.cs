@@ -82,17 +82,47 @@ namespace OniAiBridge
                         var mgr = holder.GetNetworkManager();
                         UtilityConnections before = mgr.GetConnections(cell, false);
 
-                        bool applied = true; string err = null;
+                        bool applied = true; string err = null; string via2 = null;
                         if (apply)
                         {
                             try
                             {
-                                foreach (var dir in c.Dirs)
+                                // ★ 0.98.2：**先改连接位，再让管理器重新登记节点**。
+                                //   0.98.0 只调 AddConnection + ForceRebuildNetworks，实测结果是
+                                //   "掩码对了、networkId 碎成 0/1/2 三段、电池电量照掉"。
+                                //   游戏在电线 spawn/despawn 时走的是 SetConnections / AddToNetworks，
+                                //   那才是"登记节点 + 标脏重建"的入口。
+                                object item = null;
+                                try { item = go.GetComponent<Wire>(); } catch { }
+                                if (item == null) { try { item = go; } catch { } }
+
+                                if (item != null)
                                 {
-                                    try { mgr.AddConnection(dir, cell, false); }
-                                    catch (System.Exception e1) { err = "AddConnection:" + e1.GetType().Name; applied = false; }
+                                    try
+                                    {
+                                        mgr.SetConnections((UtilityConnections)c.Mask, cell, false);
+                                        via2 = "IUtilityNetworkMgr.SetConnections(cell, mask, item)";
+                                    }
+                                    catch (System.Exception es) { err = "SetConnections:" + es.GetType().Name; }
                                 }
-                                // ★ 关键：强制重建网络拓扑，否则 networkId 一直是 -1（以前就卡在这）
+                                if (via2 == null)
+                                {
+                                    // 退路：逐方向 AddConnection
+                                    foreach (var dir in c.Dirs)
+                                    {
+                                        try { mgr.AddConnection(dir, cell, false); }
+                                        catch (System.Exception e1) { err = "AddConnection:" + e1.GetType().Name; applied = false; }
+                                    }
+                                    via2 = "AddConnection(逐方向)";
+                                }
+
+                                // 让管理器重新登记该节点 + 重建拓扑（关键）
+                                if (item != null)
+                                {
+                                    // 注意：**不要** RemoveFromNetworks（它把节点摘掉 ⇒ networkId 变 -1）；
+                                    // 只需要"登记节点 + 标脏"，重建交给 ForceRebuildNetworks。
+                                    try { mgr.AddToNetworks(cell, item, false); } catch (System.Exception ea) { err = "AddToNetworks:" + ea.GetType().Name; }
+                                }
                                 ForceRebuild(mgr);
                             }
                             catch (System.Exception e2) { err = e2.GetType().Name + ":" + e2.Message; applied = false; }
@@ -117,6 +147,7 @@ namespace OniAiBridge
                             .Append(",\"expected\":").Append((int)c.Mask)
                             .Append(",\"networkId\":").Append(netId)
                             .Append(",\"via\":").Append(Snap.Str(netHow));
+                        if (via2 != null) rows.Append(",\"how\":").Append(Snap.Str(via2));
                         if (err != null) rows.Append(",\"error\":").Append(Snap.Str(err));
                         rows.Append('}');
                     }
@@ -218,17 +249,8 @@ namespace OniAiBridge
             return null;
         }
 
-        static int DirBit(UtilityConnections d)
-        {
-            switch (d)
-            {
-                case UtilityConnections.Up: return 1;
-                case UtilityConnections.Right: return 2;
-                case UtilityConnections.Down: return 4;
-                case UtilityConnections.Left: return 8;
-            }
-            return 0;
-        }
+        /// <summary>直接用枚举自己的位值（别自己猜 1/2/4/8 —— 猜反了会让掩码变成错的）。</summary>
+        static int DirBit(UtilityConnections d) { return (int)d; }
 
         static string ExtractArray(string body, string key)
         {

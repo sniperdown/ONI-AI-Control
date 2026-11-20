@@ -3465,3 +3465,34 @@ POST /v1/job
 走同一个配方；`confirm` 省略时只读。返回每格 `before/after/networkId` + `pathDiag`。
 
 **判断电有没有通**：只能看电池 `joules` 是否在涨（`/v1/buildings`）；**`operational` 不表示通电**。
+---
+
+### 3.45 `POST /v1/reach` —— 可达性查询（0.100.0）
+
+**用途**：下挖掘/建造标记**之前**问一句"这格够不够得到"，避免给够不到的格子下活
+（盲测里这会让小人反复接活又卡死，还出现过把小人传送进实心岩）。
+
+```json
+POST /v1/reach
+{"from":{"x":114,"y":217}, "cells":[[120,205],[121,205],[122,205]]}
+```
+`from` 省略 ⇒ 用**总部所在格**；一次最多 400 格。
+
+**响应**每格：`x / y / cell / reachable / dist / reason / solid`（液体格额外给 `liquidDepth`）。
+
+| `reason` | 含义 |
+|---|---|
+| `null`（`reachable:true`） | 现在就走得到，`dist` 是步数 |
+| `need_dig` | 该格是实心方块 —— 挖掘目标本身通常就是它（挖完才到得了） |
+| `need_ladder` | **搭梯子/滑杆就能到**（可补救，不是"不可达"） |
+| `blocked_by_liquid` | 被液体挡 |
+| `no_floor` | 气体格、脚下没地板，站不住 |
+| `disconnected` | 真不连通 |
+
+**判定依据**：两条 BFS，用的全是游戏自己的导航数据
+（`Grid.DupeImpassable` / `Grid.Solid` / `Grid.HasLadder` / `Grid.HasPole`，与 `NavGrid` 同源）：
+* 只走地面 → 到了就 `reachable`
+* 允许梯子/滑杆 → 到了就 `need_ladder`
+* 都没到 ⇒ 看该格是实心/液体/无地板/真不连通
+
+实测：20 格 **67 ms**；小人自己的格子判 `reachable:true`；梯子顶可站（`Grid.HasLadder[下方]` 也算有支撑）。

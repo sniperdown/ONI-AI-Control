@@ -1188,7 +1188,7 @@ namespace OniAiBridge
                 }
                 if (end < 0) { status = 400; code = "BAD_REQUEST"; message = "wirePath 括号不匹配"; return null; }
                 string arr = body.Substring(lb, end - lb + 1);
-                int p = 0;
+                int p = 1;   // 跳过外层 [，否则第一个坐标被吃掉（7 点只建 6 格）
                 while (p < arr.Length)
                 {
                     int s = arr.IndexOf('[', p);

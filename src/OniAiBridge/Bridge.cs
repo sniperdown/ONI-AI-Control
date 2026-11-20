@@ -16,7 +16,7 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.99.2";
+        public const string ModVersion = "0.100.0";
         public const string Stage = "M7.5";
 
         static BridgeSettings settings;
@@ -196,7 +196,16 @@ namespace OniAiBridge
                     return;
                 case "/v1/debug/mods": HandleDebugMods(client); return;   // 诊断：不放进公共 /v1/meta
                 case "/v1/catalog": HandleCatalog(client); return;   // M5.2 只读建筑目录
-                case "/v1/wire":
+                case "/v1/reach":
+                    // 0.100.0：可达性查询（下标记之前先问，别给够不到的格子下活）
+                    if (method != "POST") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use POST")); return; }
+                    {
+                        int stR; string cR, mR;
+                        string dR = Reach.Query(body, out stR, out cR, out mR);
+                        if (dR == null) WriteJson(client, stR, Error(cR ?? "ERROR", mR ?? "unknown"));
+                        else WriteJson(client, 200, Ok(dR));
+                        return;
+                    }                case "/v1/wire":
                     // 0.98.0：批量铺线 + 显式设连接掩码（含 ForceRebuildNetworks）
                     if (method != "POST") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use POST")); return; }
                     {

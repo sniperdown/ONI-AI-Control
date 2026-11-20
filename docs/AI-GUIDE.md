@@ -59,6 +59,20 @@ curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/meta
    * ⚠️ 已知缺口：**不会连到路径外的既有电网**（游戏的 `CheckForConnection` 未抄）⇒ 要把新线接到旧网，
      就把旧网上要接的格子**也写进 `wirePath`**（待验）。
 
+0-c. **下挖掘/建造标记之前，先问 `POST /v1/reach` —— 别给"够不到的格子"下活**
+   ```json
+   {"cells":[[120,205],[121,205],[122,205]]}          // 起点默认总部
+   ```
+   返回每格 `reachable` / `dist` / `reason`：
+   * `reachable:true` —— 现在就走得到
+   * `reason:"need_dig"` —— 那格是实心方块（**挖掘目标本身就会是这个**：挖完才到得了）
+   * `reason:"need_ladder"` —— 搭梯子/滑杆就能到（**这是"可补救"，不是"不可达"**）
+   * `reason:"blocked_by_liquid"` —— 被液体挡
+   * `reason:"no_floor"` —— 气体格、脚下没地板（站不住）
+   * `reason:"disconnected"` —— 真不连通
+   * 一次最多 400 格，20 格实测 **67 ms**。
+   ⚠️ **连续给够不到的格子下 Dig，会让小人反复接活又原地卡死**（盲测实测过），
+     还有把小人传送进实心岩的事故。**先问再标**。
 0-b. **⚠️ `operational=true` 不代表通电！**（最容易骗到结论的一条）
    `operational` 是 `Operational.IsOperational` = "**建筑完好、在运转**"，**缺电时照样是 true**。
    判断"电有没有通"只能看：**电池 `joules` 是否在涨**（`/v1/buildings` 的 `joules` / `joulesCapacity`）、

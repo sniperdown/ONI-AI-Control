@@ -32,3 +32,38 @@
 ## 四、写归档时同样适用
 
 日志、memory、报告中提到存档名，一律**从字符串抄**（目录名 / `/v1/saves` 的路径），不凭记忆和截图。
+
+---
+
+## 五、怎么找到加载入口（IL 证据，2026-11-20 已查，别重复查）
+
+**点"加载"按钮之后的真实调用链**：
+
+```
+按钮回调 → LoadScreen.Load()                 ← 按钮处理函数（吃字段 LoadScreen::selectedSave）
+            ├─ DlcManager.IsAllContentSubscribed(selectedSave.dlcIds)
+            ├─ LoadScreen.ConfirmDoAction(...)
+            └─ LoadingOverlay.Load(...)      ← 下一跳
+底层加载器 SaveLoader：
+            ├─ SaveLoader.Load(params=1)        （两个 1 参重载）
+            ├─ SaveLoader.LoadHeader(params=2)  ← 读 .sav 头（周期/人数）
+            ├─ SaveLoader.LoadScene()
+            └─ SaveLoader.LoadFromWorldGen()
+```
+
+**`SelectedSave` 的结构（关键）**：
+
+```
+SelectedSave { string filename;  <dlcIds>;  GameObject button; }
+```
+
+⇒ **`filename` 就是存档路径字符串**，所以"按路径加载"是可行的：填 `SelectedSave.filename`
+再走 `LoadingOverlay.Load` / `SaveLoader.Load` 即可，不需要 UI 按钮索引。
+
+**周期/人数不用走 `LoadHeader`**：`.sav` 是「16 字节二进制头 + 明文 JSON 头 + Klei 二进制体」，
+自己读前 64 KB 正则抓 `numberOfCycles` / `numberOfDuplicants` / `baseName` 就行（0.103.0 已这么做，
+`/v1/saves` 现在直接给 `cycle` / `dups` / `baseName` 字符串）。好处：不依赖任何游戏 API 签名。
+
+**UI 根对象名的坑**：装载界面的类是 `LoadScreen`（`KScreen` 子类），但运行时实例名是
+**`LoadScreen(Clone)`** —— `GameObject.Find("LoadScreen")` 返回 null 就是这个原因
+（`SaveUi.List()` 因此拿到 0 个按钮）。查这类界面要按**前缀/类型**扫，不要用精确名 `Find`。

@@ -181,8 +181,14 @@ namespace OniAiBridge
                     sb.Append(",\"uiMismatch\":").Append(ui == null ? "true" : "false");
                 }
 
-                sb.Append(",\"cycle\":").Append("null");
-                sb.Append(",\"dups\":").Append("null");
+                {
+                    int? cy, dp; string bn;
+                    try { ReadSavHeader(System.IO.Path.Combine(e.Base, e.Rel), out cy, out dp, out bn); }
+                    catch { cy = null; dp = null; bn = null; }
+                    sb.Append(",\"cycle\":").Append(cy.HasValue ? cy.Value.ToString() : "null");
+                    sb.Append(",\"dups\":").Append(dp.HasValue ? dp.Value.ToString() : "null");
+                    sb.Append(",\"baseName\":").Append(bn == null ? "null" : Snap.Str(bn));
+                }
                 sb.Append(",\"colonyInfoUnavailable\":").Append(Snap.Str("未解析存档头（.sav 二进制）；如需殖民地名/周期请后续版本加 LoadHeader"));
                 sb.Append(",\"isAutoSave\":").Append(e.IsAuto ? "true" : "false");
                 sb.Append(",\"clusterId\":").Append("null");
@@ -204,6 +210,33 @@ namespace OniAiBridge
             return sb.ToString();
         }
 
+        /// <summary>
+        /// 0.103.0：直接读 **.sav 的明文头**拿周期/人数 —— 不走游戏 API，不猜签名。
+        /// 格式（本项目早已核实）：16 字节二进制头 + 明文 JSON 头 + Klei 二进制体。
+        /// 只读前 64 KB，正则抓 numberOfCycles / numberOfDuplicants，抓不到就返回 null（不编造）。
+        /// </summary>
+        internal static void ReadSavHeader(string full, out int? cycle, out int? dups, out string baseName)
+        {
+            cycle = null; dups = null; baseName = null;
+            try
+            {
+                using (var fs = new System.IO.FileStream(full, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite))
+                {
+                    var buf = new byte[64 * 1024];
+                    int n = fs.Read(buf, 0, buf.Length);
+                    if (n <= 16) return;
+                    string s = System.Text.Encoding.UTF8.GetString(buf, 16, n - 16);
+                    var mc = System.Text.RegularExpressions.Regex.Match(s, "\\\"numberOfCycles\\\"\\s*:\\s*(\\d+)");
+                    var md = System.Text.RegularExpressions.Regex.Match(s, "\\\"numberOfDuplicants\\\"\\s*:\\s*(\\d+)");
+                    var mb = System.Text.RegularExpressions.Regex.Match(s, "\\\"baseName\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"");
+                    int v;
+                    if (mc.Success && int.TryParse(mc.Groups[1].Value, out v)) cycle = v;
+                    if (md.Success && int.TryParse(md.Groups[1].Value, out v)) dups = v;
+                    if (mb.Success) baseName = mb.Groups[1].Value;
+                }
+            }
+            catch { }
+        }
         static string FmtTime(System.DateTime t)
         {
             try

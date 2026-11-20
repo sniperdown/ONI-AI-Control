@@ -36,6 +36,14 @@ curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/meta
 
 **三个最容易踩的坑，现在就记住**：
 
+0-00. **⚠️ Unity API 返回空 / 0 / null 时，第一件事查是不是在主线程**
+   在 **HTTP 工作线程**上调 Unity API（`Resources.FindObjectsOfTypeAll`、`GetComponentsInChildren`、
+   各种 `GameObject.Find`、`Transform` 访问…）**不抛异常，直接返回空数组 / 0 / null** ——
+   看起来像"对象不存在"，于是人会去查名字对不对，而真正原因是**根本不在主线程**。
+   * 本坑已踩三次：`BuildWirePath`、`Reach`、`SaveUi.List()`（`uiButtonCount=0`）。
+   * 判据：**先怀疑线程，再怀疑名字**。
+   * 修法：包进 `MainThread.InvokeAdaptive(...)` 并缓存；读缓存时把"刷新是否成功"一并回报
+     （主菜单/装载界面可能没有 `Game.Update` tick ⇒ 主线程泵不响应，这时要报"泵没响应"，别说"没有按钮"）。
 0-0. **⚠️ 存档名只认字符串，不认截图（2026-11-20 事故）**
    * 殖民地/存档名一律从 **文件系统目录名** 或 **`GET /v1/saves` 的 `file` 路径** 拿；
    * **禁止**用截图/OCR/肉眼确认档名（曾把「首都」看成「首部」，一整天判断都建在错档上）；

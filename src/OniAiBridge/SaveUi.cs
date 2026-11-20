@@ -45,7 +45,7 @@ namespace OniAiBridge
         /// 现在**不依赖根对象**：直接 `Resources.FindObjectsOfTypeAll<Transform>()` 扫全部层级，
         /// 名字以 `Prefab_ColonyButton` 开头的就是目标按钮（这是实测存在的命名）。
         /// </summary>
-        internal static List<Entry> List()
+        static List<Entry> ListOnMainThread()
         {
             var list = new List<Entry>();
             try
@@ -98,6 +98,32 @@ namespace OniAiBridge
             }
             catch { }
             return list;
+        }
+        static List<Entry> _cache;
+
+        /// <summary>
+        /// 在主线程枚举一次并缓存（Unity API 必须在主线程；在工作线程上调用**不报错、直接返回空**）。
+        /// 返回 false 表示主线程泵没响应（例如主菜单态 Game.Update 不 tick）—— 调用方要如实报，别当成"没有按钮"。
+        /// </summary>
+        internal static bool Refresh(out string why)
+        {
+            why = null;
+            string local = null;
+            int okR; bool busyR;
+            bool ran = MainThread.InvokeAdaptive(() =>
+            {
+                try { _cache = ListOnMainThread(); }
+                catch (System.Exception e) { local = e.GetType().Name; }
+            }, 3000, 8000, out okR, out busyR);
+            if (!ran) { why = "主线程泵未响应（主菜单/装载界面可能没有 Game.Update tick）"; return false; }
+            why = local;
+            return true;
+        }
+
+        /// <summary>读缓存（没刷新过就是空表）。</summary>
+        internal static List<Entry> Cached()
+        {
+            return _cache ?? new List<Entry>();
         }
         /// <summary>给某个殖民地找按钮：文本里**精确包含**殖民地名的第一个匹配；找不到返回 null。</summary>
         internal static Entry FindByColony(List<Entry> entries, string colony)

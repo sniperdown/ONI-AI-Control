@@ -161,8 +161,12 @@ namespace OniAiBridge
             sb.Append(",\"counts\":{\"local\":").Append(nLocal).Append(",\"cloud\":").Append(nCloud).Append('}');
             if (cloudErr != null) sb.Append(",\"cloudError\":").Append(Snap.Str(cloudErr));
             // 0.102.0：装载界面开着时枚举一次殖民地按钮（名字→#i 的字符串桥）
-            var uiEntries = SaveUi.List();
+            string uiWhy = null;
+            bool uiOk = SaveUi.Refresh(out uiWhy);
+            var uiEntries = SaveUi.Cached();
             sb.Append(",\"uiButtonCount\":").Append(uiEntries.Count);
+            sb.Append(",\"uiRefreshOk\":").Append(uiOk ? "true" : "false");
+            if (!uiOk) sb.Append(",\"uiRefreshWhy\":").Append(Snap.Str(uiWhy));
             sb.Append(",\"saves\":[");
             for (int i = 0; i < all.Count; i++)
             {

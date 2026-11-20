@@ -36,19 +36,30 @@ curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/meta
 
 **三个最容易踩的坑，现在就记住**：
 
-0. **建电网正确的是 `build` + `wirePath`（0.99.x 起，实测能通电）**
+0-a. **要拉电线 → 用 `build` + `wirePath`，把整条路径一次给全**
    ```json
-   {"type":"build","prefabId":"Wire","wirePath":[[112,204],[113,204],...,[117,204]],"confirm":true,"materials":["Cuprite"]}
+   {"type":"build","prefabId":"Wire","wirePath":[[112,204],[113,204],[114,204],[115,204],[116,204],[117,204]],
+    "confirm":true,"materials":["Cuprite"]}
    ```
-   * **一次请求给整条路径**：逐格建线，**建完立刻按游戏原配方双向连线**
-     （`DirectionFromToCell` → 双向 `CanAddConnection` → 双向 `AddConnection`；
-     出处 `UtilityBuildTool.ApplyPathToConduitSystem`，IL 已核）。
-   * 返回里看 `pathDiag`（每对 `CONNECTED(dir/inv)` 或 `NO_MGR`/`CANNOT_ADD(guard)`）。
-   * **单格 build 不连线**（`mask=0` 孤岛，与游戏一致）；要连就必须给 ≥2 格的 `wirePath`。
-   * 建成后可用 `/v1/wire` 读掩码与 `networkId` 复核；**所有格子 `networkId` 相同 = 一条网**。
-   * ⚠️ 建线是蓝图，要等小人建完（几秒到一分多钟）才会进网络；**蓝图阶段 `networkId` 是 -1，别误判为失败**。
-   * ⚠️ 目前**不会连到路径外的既有电网**（游戏拖拽有这一步，我们还没抄）；从零布线够用。
-0. **⚠️ `operational=true` 不代表通电！**（最容易骗到结论的一条）
+   逐格建线，**建完立刻按游戏原配方双向连线**（`DirectionFromToCell` → 双向 `CanAddConnection`
+   → 双向 `AddConnection`；出处 `UtilityBuildTool.ApplyPathToConduitSystem`，IL 已核）。
+
+   **能力表（2026-11-20 实测）**
+
+   | 用法 | 结果 |
+   |---|---|
+   | ✅ `build` + `wirePath`（一次给全整条路径） | **能成一条网、能通电**（实测电池 0 → 5657 J，`networkId` 全同） |
+   | ⚠️ **单格 `build`**（不带 `wirePath`） | **孤岛**：`mask=0`、独立 `networkId`，**与游戏一致，不是 bug** |
+   | ⚠️ 单独调 `/v1/wire` 去接已有网 | **仍不行**（已注册到不同网络的两格之间不会 merge） |
+   | ❓ `wirePath` 里包含**已有电线**的格子 | **未验证**（可能可行 —— 把要接的那格也写进 path 试试） |
+
+   * 返回里看 `pathDiag`：每对 `CONNECTED(dir/inv)`；出现 `NO_MGR` / `CANNOT_ADD(guard)` 就是没连上。
+   * ⚠️ 建线是**蓝图**：要等小人建完（几秒到一分多钟）才进网络，**蓝图阶段 `networkId=-1` 属正常**，别误判失败。
+   * 建成后复核：`/v1/wire` 读掩码与 `networkId`（**同一网络 = `networkId` 相同**）。
+   * ⚠️ 已知缺口：**不会连到路径外的既有电网**（游戏的 `CheckForConnection` 未抄）⇒ 要把新线接到旧网，
+     就把旧网上要接的格子**也写进 `wirePath`**（待验）。
+
+0-b. **⚠️ `operational=true` 不代表通电！**（最容易骗到结论的一条）
    `operational` 是 `Operational.IsOperational` = "**建筑完好、在运转**"，**缺电时照样是 true**。
    判断"电有没有通"只能看：**电池 `joules` 是否在涨**（`/v1/buildings` 的 `joules` / `joulesCapacity`）、
    或用电器是否真的在工作。**别拿 `operational` 当供电判据** —— 它比 `placed:true` 更危险，

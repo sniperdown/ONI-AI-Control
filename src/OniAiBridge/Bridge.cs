@@ -196,7 +196,16 @@ namespace OniAiBridge
                     return;
                 case "/v1/debug/mods": HandleDebugMods(client); return;   // 诊断：不放进公共 /v1/meta
                 case "/v1/catalog": HandleCatalog(client); return;   // M5.2 只读建筑目录
-                case "/v1/build-materials":
+                case "/v1/wire":
+                    // 0.98.0：批量铺线 + 显式设连接掩码（含 ForceRebuildNetworks）
+                    if (method != "POST") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use POST")); return; }
+                    {
+                        int stW; string cW, mW;
+                        string dW = WireNet.Run(body, out stW, out cW, out mW);
+                        if (dW == null) WriteJson(client, stW, Error(cW ?? "ERROR", mW ?? "unknown"));
+                        else WriteJson(client, 200, Ok(dW));
+                        return;
+                    }                case "/v1/build-materials":
                     // 0.97.0：这个建筑能用哪些材料（穷举，含本档 0kg 的）+ 本档实况（只读、纯数据）
                     if (method != "GET") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use GET")); return; }
                     {

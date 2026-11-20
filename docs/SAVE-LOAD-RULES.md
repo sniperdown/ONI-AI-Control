@@ -125,3 +125,33 @@ ONI 大概率不实现 ⇒ `clicked=true` 但游戏侧毫无反应（实测「�
   记下"干净状态"：列表几行、第一行是什么、有没有展开任何东西。
 * 一旦发现主人在同一时间操作过，**立刻停手**，不点、不改、不基于旧截图下结论，等确认后再重新取基线。
 * 这跟"截图前先确认面板开着"是同一条道理的延伸：**证据的时效性依赖现场没被别人改过**。
+
+## 十二、补丁脚本写完**当场执行**
+
+写过 `patch-*.ps1` 却没运行，随后编译装的是旧代码，**到下一轮才发现**（实测发生过一次）。
+规矩：**补丁脚本写完当场跑**；或在编译前扫一遍 `shared/tmp/patch-*.ps1` 里有没有未应用的。
+"写的"和"跑的"分成两步，就一定会出现"以为改了、其实没改"。
+另：版本号检查不能只查"三处彼此相同"（三处都停在旧版也算相同），**必须和这次构建的期望值对照**。
+
+## 十三、`KButton` 的正确程序化点击：`onClick.DynamicInvoke()`
+
+实测（2026-11-20，装载界面的殖民地行）：
+
+| 做法 | 结果 |
+|---|---|
+| `ExecuteEvents.Execute(pointerClickHandler)` | **无效**（返回成功但游戏毫无反应） |
+| `SignalClick(1参)` | 未走通（存在，但需要参数/上下文） |
+| **`onClick` 字段 → `GetInvocationList()` → `DynamicInvoke()`** | **有效**（`onClickSubs=1`，`dispatchMethod="onClick.DynamicInvoke(1)"`，面板立刻展开） |
+
+`KButton` 是**事件字段模式**，不是方法模式。找字段时**沿继承链搜**（`DeclaredOnly` 逐级向上）。
+若 `GetInvocationList()` 为 0 个订阅者 ⇒ 报 `onClickEmpty=true`，别跟"派发失败"混在一起。
+
+**这条适用于全游戏所有 ONI 界面**，不只是装载界面。
+
+## 十四、字段报 `null` 之前，先问"我的搜索条件是什么"
+
+`kbuttonMethods=null` 一度被当成"KButton 没有点击方法"，实际是**搜索范围太窄**
+（只搜了 `DeclaredOnly` 且名字含 Click/Press/Signal 的**方法**）。放宽后列出
+`add_onClick/1`、`remove_onClick/1`、`SignalClick/1`、`OnPointerClick/1` 等。
+
+⇒ **空结果 ≠ 不存在，可能是问法不对**。这跟"Unity API 返回空先查主线程"是同一类。

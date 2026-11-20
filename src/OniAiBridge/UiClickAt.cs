@@ -105,6 +105,47 @@ namespace OniAiBridge
                         }
                     }
 
+                    // KToggle：**把所有事件字段和方法全摊开**（上次只查名字含 Click 的，漏了 SignalClick）
+                    string ktoggleFields = null, ktoggleMethods2 = null;
+                    if (actionComp != null && (targetType == "KToggle" || targetType == "Toggle" || targetType == "MultiToggle"))
+                    {
+                        try
+                        {
+                            var fb = new StringBuilder();
+                            var ty2 = actionComp.GetType();
+                            int nf = 0;
+                            while (ty2 != null)
+                            {
+                                var fs = ty2.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                                    | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly);
+                                for (int i = 0; i < fs.Length; i++)
+                                {
+                                    var ft = fs[i].FieldType;
+                                    bool del = typeof(System.Delegate).IsAssignableFrom(ft);
+                                    if (!del && ft.Name.IndexOf("Event", System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+                                    if (nf++ > 0) fb.Append(", ");
+                                    fb.Append(fs[i].Name).Append(':').Append(ft.Name);
+                                }
+                                ty2 = ty2.BaseType;
+                            }
+                            ktoggleFields = nf == 0 ? null : fb.ToString();
+                        }
+                        catch { }
+                        try
+                        {
+                            var mb = new StringBuilder();
+                            var ms2 = actionComp.GetType().GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                                | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly);
+                            for (int i = 0; i < ms2.Length; i++)
+                            {
+                                if (i > 0) mb.Append(", ");
+                                mb.Append(ms2[i].Name).Append('/').Append(ms2[i].GetParameters().Length);
+                            }
+                            ktoggleMethods2 = mb.ToString();
+                        }
+                        catch { }
+                    }
+
                     string method = null;
                     string err = null;
                     bool done = false;
@@ -138,6 +179,37 @@ namespace OniAiBridge
                         catch (System.Exception e5) { err = "onClickRead:" + e5.GetType().Name + ":" + e5.Message; }
                     }
 
+                    // KToggle：先试**带 bool 参的 onValueChanged**（开关靠值变化），再试 onClick()
+                    if (!done && actionComp != null && (targetType == "KToggle" || targetType == "Toggle" || targetType == "MultiToggle"))
+                    {
+                        var names2 = new string[] { "onValueChanged", "onToggle", "onClick", "onPress" };
+                        for (int k = 0; k < names2.Length && !done; k++)
+                        {
+                            var fi2 = FindField(actionComp.GetType(), names2[k]);
+                            if (fi2 == null) continue;
+                            try
+                            {
+                                var dlg2 = fi2.GetValue(actionComp) as System.Delegate;
+                                var inv2 = dlg2 != null ? dlg2.GetInvocationList() : null;
+                                if (inv2 == null || inv2.Length == 0) continue;
+                                for (int q = 0; q < inv2.Length && !done; q++)
+                                {
+                                    var ps2 = inv2[q].Method.GetParameters();
+                                    try
+                                    {
+                                        if (ps2.Length == 1 && ps2[0].ParameterType == typeof(bool)) inv2[q].DynamicInvoke(new object[] { true });
+                                        else if (ps2.Length == 0) inv2[q].DynamicInvoke();
+                                        else continue;
+                                        method = "KToggle." + names2[k] + ".DynamicInvoke(" + ps2.Length + ")";
+                                        done = true;
+                                    }
+                                    catch (System.Exception e6) { err = "KToggle." + names2[k] + ":" + e6.GetType().Name + ":" + e6.Message; }
+                                }
+                            }
+                            catch (System.Exception e7) { err = "KToggle.read:" + e7.GetType().Name; }
+                        }
+                    }
+
                     // 退路：UGUI 派发（实测对本界面无效，保留只为观测）
                     if (!done && hits.Count > 0)
                     {
@@ -163,6 +235,7 @@ namespace OniAiBridge
                     sb.Append(",\"hitText\":").Append(hitText == null ? "null" : Snap.Str(hitText));
                     sb.Append(",\"hitAncestry\":").Append(ancestry == null ? "null" : Snap.Str(ancestry));
                     sb.Append(",\"hitTargetType\":").Append(targetType == null ? "null" : Snap.Str(targetType));
+                    sb.Append(",\"ktoggleFields\":").Append(ktoggleFields == null ? "null" : Snap.Str(ktoggleFields)).Append(",\"ktoggleMethods\":").Append(ktoggleMethods2 == null ? "null" : Snap.Str(ktoggleMethods2));
                     sb.Append(",\"kbuttonMethods\":").Append(kbuttonMethods == null ? "null" : Snap.Str(kbuttonMethods));
                     sb.Append(",\"onClickField\":").Append(onClickField ? "true" : "false");
                     sb.Append(",\"onClickSubs\":").Append(onClickSubs);

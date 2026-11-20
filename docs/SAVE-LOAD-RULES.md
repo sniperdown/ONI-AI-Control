@@ -155,3 +155,18 @@ ONI 大概率不实现 ⇒ `clicked=true` 但游戏侧毫无反应（实测「�
 `add_onClick/1`、`remove_onClick/1`、`SignalClick/1`、`OnPointerClick/1` 等。
 
 ⇒ **空结果 ≠ 不存在，可能是问法不对**。这跟"Unity API 返回空先查主线程"是同一类。
+
+## 十五、【更正】路径点击对 `KToggle` 是有效的
+
+**先前的错误结论**：「`/v1/ui/click` 的路径点击对 `KToggle` 无效」—— **作废**。
+实际证据：沙盒开关打开后，同一个 `ToolMenu/…/SandboxActionToggle#6`（生成器，`KToggle`）的**路径点击直接生效**，
+面板 `ToolMenu/SandboxToolParameters/...` 立刻出现。
+
+⇒ 真实规律：**路径点击对 `KToggle` 有效，前提是控件存在且可见**。之前失败是**控件根本不存在**（沙盒模式没开，工具条未渲染）。
+
+**"点了没反应"按这个顺序查（顺序不能反）**：
+1. **控件在不在** —— `hitCount`、路径是否存在、**前置开关开了吗**（例：沙盒模式不随存档保留，重进/重载后必须重新点 `SandboxToggle`）
+2. **可见不可见** —— `activeInHierarchy`、父级是否展开
+3. **派发方式对不对** —— 才轮到 `onClick.DynamicInvoke` / `ExecuteEvents`
+
+从第 3 步开始查，会去重写一套派发逻辑；从第 1 步查，往往只要点一个开关。

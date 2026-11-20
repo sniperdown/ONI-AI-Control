@@ -365,7 +365,17 @@ namespace OniAiBridge
             }
             catch { return null; }
         }
-        /// <summary>RectTransform 四角 → 屏幕坐标 (min,max)，给调用方一个可点击区域（`UiRows` 也用同一份）。</summary>
+        /// <summary>
+        /// RectTransform 四角 → **屏幕坐标**（pixels，左下原点）(min,max)，给调用方一个可点击区域
+        /// （`UiRows` 也用同一份）。
+        ///
+        /// ★ 0.111.0 修：原先传 `Camera.main`，对 **Screen Space - Overlay** 的 Canvas 是错的 ——
+        ///   Overlay 画布不经过任何相机，`WorldToScreenPoint(Camera.main, ...)` 会用世界相机的投影矩阵，
+        ///   得到 `[175739.1, -1950.0, 179330.1, 1641.0]` 这种"看着像坐标、其实完全不在屏幕上"的值
+        ///   （实测：沙盒工具条 `SandboxActionToggle#6`）。调用方据此点击必然点空 —— 这就是
+        ///   "路径/控件都对、点了没反应"的一个真实成因。
+        ///   正确做法：Overlay 传 `null`；`Screen Space - Camera` / `World Space` 才传该 Canvas 的 `worldCamera`。
+        /// </summary>
         internal static bool ScreenRectOf(UnityEngine.RectTransform rt, out UnityEngine.Vector2 min, out UnityEngine.Vector2 max)
         {
             min = default(UnityEngine.Vector2); max = default(UnityEngine.Vector2);
@@ -373,7 +383,16 @@ namespace OniAiBridge
             {
                 var corners = new UnityEngine.Vector3[4];
                 rt.GetWorldCorners(corners);
-                var cam = UnityEngine.Camera.main;
+
+                UnityEngine.Camera cam = null;
+                try
+                {
+                    var canvas = rt.GetComponentInParent<UnityEngine.Canvas>();
+                    if (canvas != null && canvas.renderMode != UnityEngine.RenderMode.ScreenSpaceOverlay)
+                        cam = canvas.worldCamera;
+                }
+                catch { }
+
                 UnityEngine.Vector2 p0 = UnityEngine.RectTransformUtility.WorldToScreenPoint(cam, corners[0]);
                 UnityEngine.Vector2 p2 = UnityEngine.RectTransformUtility.WorldToScreenPoint(cam, corners[2]);
                 min = new UnityEngine.Vector2(UnityEngine.Mathf.Min(p0.x, p2.x), UnityEngine.Mathf.Min(p0.y, p2.y));

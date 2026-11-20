@@ -16,7 +16,7 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.109.0";
+        public const string ModVersion = "0.112.0";
         public const string Stage = "M7.5";
 
         static BridgeSettings settings;
@@ -279,7 +279,16 @@ namespace OniAiBridge
                         WriteJson(client, 200, Ok(dC));   // ★ 统一外壳（原来漏了 Ok，裸对象与其它 /v1/* 不一致）
                     }
                     return;
-                case "/v1/dupes":
+                case "/v1/dupes/spawn":
+                    // 0.112.0：程序化生成复制人（MinionStartingStats -> Deliver）
+                    if (method != "POST") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use POST")); return; }
+                    {
+                        int stS; string cS, mS;
+                        string dS = DupesSpawn.Execute(body, out stS, out cS, out mS);
+                        if (dS == null) WriteJson(client, stS, Error(cS ?? "ERROR", mS ?? "unknown"));
+                        else WriteJson(client, 200, Ok(dS));
+                        return;
+                    }                case "/v1/dupes":
                     if (method != "GET") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use GET")); return; }
                     {
                         bool idleOnly = !string.IsNullOrEmpty(query) && (query.IndexOf("idle=1") >= 0 || query.IndexOf("idle=true", System.StringComparison.OrdinalIgnoreCase) >= 0);

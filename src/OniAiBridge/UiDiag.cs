@@ -16,6 +16,38 @@ namespace OniAiBridge
     {
         static readonly string[] Keys = { "Colony", "Button", "Load", "Save", "Slot", "Entry" };
 
+        static string FullPath(UnityEngine.Transform tr)
+        {
+            try
+            {
+                var parts = new List<string>();
+                var cur = tr;
+                int guard = 0;
+                while (cur != null && guard++ < 64) { parts.Insert(0, cur.name); cur = cur.parent; }
+                return string.Join("/", parts.ToArray());
+            }
+            catch { return null; }
+        }
+
+        static string ReadTextsOf(UnityEngine.Transform tr)
+        {
+            var sb = new StringBuilder();
+            try
+            {
+                var texts = tr.GetComponentsInChildren<LocText>(true);
+                for (int k = 0; k < texts.Length; k++)
+                {
+                    var lk = texts[k]; if (lk == null) continue;
+                    string s = null; try { s = lk.text; } catch { }
+                    if (string.IsNullOrEmpty(s)) continue;
+                    if (sb.Length > 0) sb.Append(" | ");
+                    sb.Append(s);
+                }
+            }
+            catch { }
+            return sb.ToString();
+        }
+
         public static string Run(out int status, out string code, out string message)
         {
             status = 200; code = null; message = null;
@@ -103,6 +135,41 @@ namespace OniAiBridge
                     }
                     catch { }
 
+                    // ===== 0.107.0：殖民地按钮与存档行，带**完整层级路径** + **层级顺序索引** =====
+                    var colonyBtns = new List<string>();
+                    var saveRowList = new List<string>();
+                    {
+                        int ci = 0, rk = 0;
+                        // 按层级遍历（与 /v1/ui/click 的解析口径一致），不是 Resources 的返回顺序
+                        var roots = new List<UnityEngine.Transform>();
+                        if (all != null) for (int i = 0; i < all.Length; i++) { var tr = all[i]; if (tr != null && tr.parent == null) { if (!roots.Contains(tr)) roots.Add(tr); } }
+                        // 只从名为 LoadScreen* 的根开始，保证顺序是界面树顺序
+                        var starts = new List<UnityEngine.Transform>();
+                        for (int i = 0; i < roots.Count; i++) if (roots[i].name != null && roots[i].name.StartsWith("LoadScreen", System.StringComparison.Ordinal)) starts.Add(roots[i]);
+                        for (int s2 = 0; s2 < starts.Count; s2++)
+                        {
+                            var stack = new List<UnityEngine.Transform>();
+                            stack.Add(starts[s2]);
+                            int guard = 0;
+                            while (stack.Count > 0 && guard++ < 20000)
+                            {
+                                var cur = stack[0];
+                                stack.RemoveAt(0);
+                                string nm = cur.name ?? "";
+                                if (nm == "Prefab_ColonyButton")
+                                {
+                                    colonyBtns.Add("{\"i\":" + ci + ",\"fullPath\":" + Snap.Str(FullPath(cur)) + ",\"name\":" + Snap.Str(ReadTextsOf(cur)) + "}");
+                                    ci++;
+                                }
+                                else if (nm.StartsWith("SaveTemplate", System.StringComparison.Ordinal))
+                                {
+                                    saveRowList.Add("{\"k\":" + rk + ",\"fullPath\":" + Snap.Str(FullPath(cur)) + ",\"name\":" + Snap.Str(ReadTextsOf(cur)) + "}");
+                                    rk++;
+                                }
+                                for (int c2 = 0; c2 < cur.childCount; c2++) stack.Add(cur.GetChild(c2));
+                            }
+                        }
+                    }
                     var sb = new StringBuilder(2048);
                     sb.Append("{\"transformTotal\":").Append(total);
                     sb.Append(",\"loadScreenNamed\":").Append(foundLoadScreen);
@@ -111,6 +178,8 @@ namespace OniAiBridge
                     sb.Append("],\"nameHits\":[");
                     for (int i = 0; i < hit.Count; i++) { if (i > 0) sb.Append(','); sb.Append(Snap.Str(hit[i])); }
                     sb.Append(']');
+                    sb.Append(",\"colonyButtons\":[").Append(string.Join(",", colonyBtns.ToArray())).Append(']');
+                    sb.Append(",\"saveRows\":[").Append(string.Join(",", saveRowList.ToArray())).Append(']');
                     sb.Append(",\"note\":").Append(Snap.Str("loadScreenNamed>0 表示界面开着；nameHits 里看真正的按钮对象叫什么"));
                     sb.Append('}');
                     data = sb.ToString();

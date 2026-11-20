@@ -16,7 +16,7 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.106.0";
+        public const string ModVersion = "0.108.1";
         public const string Stage = "M7.5";
 
         static BridgeSettings settings;
@@ -244,6 +244,16 @@ namespace OniAiBridge
                     }
                 case "/v1/debug/vision-sample": HandleVisionSample(client, query); return;   // 一次性诊断（验完可删）
                 case "/v1/ui/click":
+                    // 0.108.0：body 里带 x/y 就走**坐标点击**（截图左上原点），否则走原来的路径点击
+                    if (body != null && (body.IndexOf("\"fx\"", System.StringComparison.Ordinal) >= 0
+                        || (body.IndexOf("\"x\"", System.StringComparison.Ordinal) >= 0 && body.IndexOf("\"y\"", System.StringComparison.Ordinal) >= 0)))
+                    {
+                        int stA; string cA, mA;
+                        string dA = UiClickAt.Run(body, out stA, out cA, out mA);
+                        if (dA == null) { WriteJson(client, stA, Error(cA ?? "ERROR", mA ?? "unknown")); return; }
+                        WriteJson(client, stA, dA);
+                        return;
+                    }
                     if (method != "POST") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use POST")); return; }
                     {
                         int stC; string cC, mC;

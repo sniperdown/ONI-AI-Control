@@ -80,3 +80,37 @@ SelectedSave { string filename;  <dlcIds>;  GameObject button; }
 **两层索引空间互相独立，别混**：
 * 第一层 `Prefab_ColonyButton#i` —— 选哪个殖民地
 * 第二层 `SaveTemplate#k/LoadButton` —— 选哪一行存档再点加载
+
+## 七、跨坐标/尺寸/命名空间：先把两边的实际值打出来
+
+**屏幕 3840×2160 vs `/v1/shot` 1280×720（3 倍缩放）** —— 截图上量的坐标必须 ×3 才能当屏幕坐标；
+`Input.mousePosition` 还是**左下原点**，要 `y = Screen.height - y`。这层转换不写出来就必错
+（实测：直接点截图坐标 → 命中 `background`，点到画面外）。
+
+**同类"看起来对、实际错一层"已踩三次**：主线程（Unity API 返回空）、`#i`（路径语法当对象名）、
+屏幕/截图缩放。共同点：**中间有一层转换，而那层没被写出来**。
+⇒ 凡是跨两个坐标/尺寸/命名空间，**第一件事把两边的实际值都打出来对比**，别假设一样。
+
+## 八、加载界面按 `savedAt` 倒序（主人确认，唯一排序依据）
+
+要定位某一行：先按 `savedAt` 倒序排序算行号，再换算坐标。
+**不要试图从对象枚举顺序推 UI 顺序** —— UI 顺序稳定，`Resources.FindObjectsOfTypeAll` 的顺序每次启动都不同。
+
+## 九、ONI 的按钮不是 UGUI `Button`
+
+ONI 用自己的 **`KButton` / `MultiToggle`**；`GetComponentInParent<UnityEngine.UI.Button>()` 返回 null。
+点任何 ONI 界面控件都会遇到这条。
+
+**`ExecuteEvents.Execute` 返回成功 ≠ 游戏收到了**：它走 UGUI 的 `IPointerClickHandler` 体系，
+ONI 大概率不实现 ⇒ `clicked=true` 但游戏侧毫无反应（实测「首都」行点了没展开）。
+正确路子是**模拟真实输入**：`KInputManager` 的输入入口，或 `PointerInputModule.ProcessMousePress`
+（"假装鼠标在这里按了一下"），而不是"直接告诉控件你被点了"。
+
+**字段语义**：`clicked` 这种乐观命名要改成 `dispatched` + `dispatchMethod`，
+让人一眼看出"用了什么方式派的"——别让字段名骗了下一轮的自己。
+
+## 十、`hitText` / `hitAncestry` 是最便宜的定位反馈
+
+点一下就能知道"命中的对象上写着什么、沿途挂了哪些交互组件"，比截图比对快一轮。
+实测：`fy=0.3569` → `hitText="1个存档 3个自动存档 3.04 MB"`（副标题，错了）；
+`fy=0.345` → `hitText="首都"`（名称行，对了）。

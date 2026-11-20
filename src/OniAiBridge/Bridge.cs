@@ -16,7 +16,7 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.100.1";
+        public const string ModVersion = "0.101.0";
         public const string Stage = "M7.5";
 
         static BridgeSettings settings;
@@ -196,7 +196,16 @@ namespace OniAiBridge
                     return;
                 case "/v1/debug/mods": HandleDebugMods(client); return;   // 诊断：不放进公共 /v1/meta
                 case "/v1/catalog": HandleCatalog(client); return;   // M5.2 只读建筑目录
-                case "/v1/reach":
+                case "/v1/move":
+                    // 0.101.0：移动复制人到指定格（先问 Navigator.CanReach，再调游戏自己的移动入口）
+                    if (method != "POST") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use POST")); return; }
+                    {
+                        int stM; string cM, mM;
+                        string dM = Move.Execute(body, out stM, out cM, out mM);
+                        if (dM == null) WriteJson(client, stM, Error(cM ?? "ERROR", mM ?? "unknown"));
+                        else WriteJson(client, 200, Ok(dM));
+                        return;
+                    }                case "/v1/reach":
                     // 0.100.0：可达性查询（下标记之前先问，别给够不到的格子下活）
                     if (method != "POST") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use POST")); return; }
                     {

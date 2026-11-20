@@ -16,7 +16,7 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.104.2";
+        public const string ModVersion = "0.106.0";
         public const string Stage = "M7.5";
 
         static BridgeSettings settings;
@@ -544,7 +544,15 @@ namespace OniAiBridge
                         WriteJson(client, 200, Ok(dU));
                     }
                     return;
-                case "/v1/saves":
+                case "/v1/ui/diag":
+                    // 0.105.0：一轮判掉「界面是否开着」+「按钮对象叫什么」（主线程执行）
+                    {
+                        int stD; string cD, mD;
+                        string dD = UiDiag.Run(out stD, out cD, out mD);
+                        if (dD == null) { WriteJson(client, stD, Error(cD ?? "ERROR", mD ?? "unknown")); return; }
+                        WriteJson(client, stD, dD);
+                    }
+                    return;                case "/v1/saves":
                     if (method != "GET") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use GET")); return; }
                     {
                         int stS; string cS, mS;

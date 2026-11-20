@@ -67,3 +67,16 @@ SelectedSave { string filename;  <dlcIds>;  GameObject button; }
 **UI 根对象名的坑**：装载界面的类是 `LoadScreen`（`KScreen` 子类），但运行时实例名是
 **`LoadScreen(Clone)`** —— `GameObject.Find("LoadScreen")` 返回 null 就是这个原因
 （`SaveUi.List()` 因此拿到 0 个按钮）。查这类界面要按**前缀/类型**扫，不要用精确名 `Find`。
+
+## 六、`Name#i` 是**路径语法**，不是 GameObject 命名
+
+`/v1/ui/click` 的路径形如 `Prefab_ColonyButton#3/Header`，其中 **`#3` 是"同名对象序号"**
+（第 4 个叫 `Prefab_ColonyButton` 的对象），**不是对象名字的一部分** —— 实测对象名就叫
+`Prefab_ColonyButton`（父 `Content`）。
+
+踩坑代价：`SaveUi.List()` 曾用 `name.LastIndexOf('#')` 解析索引 ⇒ 一个按钮都匹配不到
+（`uiButtonCount=0`），查了四轮才发现。
+
+**两层索引空间互相独立，别混**：
+* 第一层 `Prefab_ColonyButton#i` —— 选哪个殖民地
+* 第二层 `SaveTemplate#k/LoadButton` —— 选哪一行存档再点加载

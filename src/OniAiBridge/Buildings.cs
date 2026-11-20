@@ -191,6 +191,26 @@ namespace OniAiBridge
                     sb.Append(",\"operational\":").Append(operational ? "true" : "false");
                     // 没有 BuildingEnabledButton 的建筑（如砖块、门的一部分）没有"启用/禁用"概念 ⇒ null，而不是假装 true
                     sb.Append(",\"enabled\":").Append(hasEnabled ? (enabled ? "true" : "false") : "null");
+            // ★ 0.98.1：电力可观测性 —— 盲测/自测要判断"电到底通没通"，
+            //   `operational` 只代表"建筑没坏且在运转"，**不含供电状态**（缺电时它照样 true）。
+            //   所以把电池电量如实报出来：joules 会涨 = 真的在充电 = 电路是通的。
+            {
+                float? joules = null; float? cap = null;
+                try
+                {
+                    var bat = b.GetComponent<Battery>();
+                    if (bat != null)
+                    {
+                        // joulesAvailable / capacity 是 private 字段 ⇒ 反射读（只读，不改）
+                        var fi = typeof(Battery).GetField("joulesAvailable", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
+                        if (fi != null) { var v = fi.GetValue(bat); if (v is float) joules = (float)v; }
+                        try { cap = bat.capacity; } catch { }
+                    }
+                }
+                catch { }
+                sb.Append(",\"joules\":").Append(joules.HasValue ? joules.Value.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) : "null");
+                sb.Append(",\"joulesCapacity\":").Append(cap.HasValue ? cap.Value.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) : "null");
+            }
                     // ★ 0.95.0：是否已被标记拆除（`Deconstructable.IsMarkedForDeconstruction()`，元数据实测存在；
                     //   同名字段 `isMarkedForDeconstruction : bool` 也在，但方法更稳）。没该组件 ⇒ false。
                     bool markedForDeconstruct = false;

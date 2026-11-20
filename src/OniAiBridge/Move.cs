@@ -50,6 +50,20 @@ namespace OniAiBridge
             return list;
         }
 
+        /// <summary>全队任一人能否到该格（游戏判据）。用来和 BFS 对比。</summary>
+        internal static bool? AnyCanReach(int cell)
+        {
+            bool? any = null;
+            var ds = Dupes();
+            for (int i = 0; i < ds.Count; i++)
+            {
+                var r = CanReach(ds[i].Nav, cell);
+                if (!r.HasValue) continue;
+                if (r.Value) return true;
+                any = false;
+            }
+            return any;
+        }
         /// <summary>游戏自己的可达判定（`Navigator.CanReach`）。失败返回 null 表示"这个方法没调通"。</summary>
         internal static bool? CanReach(Navigator nav, int cell)
         {

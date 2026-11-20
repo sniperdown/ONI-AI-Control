@@ -158,6 +158,11 @@ namespace OniAiBridge
                         sb.Append(",\"dist\":").Append(hasW ? dw.ToString() : (hasL ? dl.ToString() : "null"));
                         sb.Append(",\"reason\":").Append(reason == null ? "null" : Snap.Str(reason));
                         sb.Append(",\"solid\":").Append(solid ? "true" : "false");
+                        // 0.101.1：同时给**游戏自己的判据**（Navigator.CanReach），用来和我们的 BFS 对比
+                        {
+                            var nav = Move.AnyCanReach(cell);
+                            sb.Append(",\"navCanReach\":").Append(nav.HasValue ? (nav.Value ? "true" : "false") : "null");
+                        }
                         if (liquid || depthKg > 0) sb.Append(",\"liquidDepth\":").Append(depthKg);
                         sb.Append('}');
                     }

@@ -37,26 +37,30 @@ namespace OniAiBridge
             return null;
         }
 
-        /// <summary>枚举当前装载界面上的殖民地按钮（没打开就返回空表）。</summary>
+        /// <summary>
+        /// 枚举装载界面上的殖民地按钮（没打开就返回空表）。
+        ///
+        /// **0.104.0 修**：以前用 `GameObject.Find("LoadScreen")`，永远返回 null ——
+        /// KScreen 实例名带 `(Clone)`（`LoadScreen(Clone)`），精确名找不到根，所以按钮数为 0。
+        /// 现在**不依赖根对象**：直接 `Resources.FindObjectsOfTypeAll<Transform>()` 扫全部层级，
+        /// 名字以 `Prefab_ColonyButton` 开头的就是目标按钮（这是实测存在的命名）。
+        /// </summary>
         internal static List<Entry> List()
         {
             var list = new List<Entry>();
             try
             {
-                UnityEngine.GameObject root = null;
-                try { root = UnityEngine.GameObject.Find("LoadScreen"); } catch { }
-                if (root == null) { try { root = UnityEngine.GameObject.Find("MainMenu")?.transform?.Find("LoadScreen")?.gameObject; } catch { } }
-                if (root == null) return list;
-
-                var trs = root.GetComponentsInChildren<UnityEngine.Transform>(true);
-                for (int i = 0; i < trs.Length; i++)
+                var all = UnityEngine.Resources.FindObjectsOfTypeAll<UnityEngine.Transform>();
+                if (all == null) return list;
+                for (int i = 0; i < all.Length; i++)
                 {
-                    var tr = trs[i];
+                    var tr = all[i];
                     if (tr == null) continue;
                     string nm = null;
                     try { nm = tr.name; } catch { }
                     if (string.IsNullOrEmpty(nm) || !nm.StartsWith("Prefab_ColonyButton", System.StringComparison.Ordinal)) continue;
 
+                    // 只认装载界面那批（排除场景里别的同名对象）：父链里有 SaveTemplate/ColonyList 之类
                     int idx = -1;
                     int hash = nm.LastIndexOf('#');
                     if (hash >= 0)
@@ -83,13 +87,18 @@ namespace OniAiBridge
                         }
                     }
                     catch { }
+
+                    // 去重（Resources 可能同一对象出现多次）
+                    bool dup = false;
+                    for (int k = 0; k < list.Count; k++) if (list[k].Index == idx) { dup = true; break; }
+                    if (dup) continue;
                     list.Add(new Entry { Index = idx, Text = sb.ToString() });
                 }
+                list.Sort((a, b) => a.Index.CompareTo(b.Index));
             }
             catch { }
             return list;
         }
-
         /// <summary>给某个殖民地找按钮：文本里**精确包含**殖民地名的第一个匹配；找不到返回 null。</summary>
         internal static Entry FindByColony(List<Entry> entries, string colony)
         {

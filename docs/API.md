@@ -3434,3 +3434,31 @@ curl -sS -H "X-Oni-Token: $TOKEN" -X POST -H 'Content-Type: application/json' \
 * 顺序与 `/v1/build-materials` 一致（够的在前）
 * **不是推荐结论**，没有 `recommended`；未解锁的、0kg 的照样列
 * 只在这个响应里加字段，`build` 其余行为（`placed`、不阻塞蓝图）**没动**
+
+---
+
+### 3.44 `POST /v1/wire` —— 批量设电线连接位（0.98.0；**能力有限，见警告**）
+
+```json
+POST /v1/wire
+{"cells":[{"x":121,"y":217,"connect":"left,right"},{"x":120,"y":217,"mask":3}],"confirm":true}
+```
+
+返回每格 `before` / `after` / `expected` / `networkId` / `how`。
+
+#### ⚠️ 能力边界（2026-11-20 实测，**别误用**）
+
+| 能做的 | 做不到的 |
+|---|---|
+| 改已有电线的**连接位**（掩码） | **让线并入 / 重建电网** |
+| 读回 `GetConnections` 与 `GetNetworkForCell` | 让断开的网络重新连通 |
+| `connect:"left,right"` 走 `(int)UtilityConnections` 位值（left+right=3） | 让新 spawn 的线自动连相邻（spawn 出来就是 `mask=0` 孤岛） |
+
+**实测后果**：调完 `SetConnections + AddToNetworks + ForceRebuildNetworks` 后，
+掩码能写对，但 `networkId` 会碎成多段（0/1/2…），**电池 `joules` 继续下降**；
+更有甚者该格会从网络里掉出来（`GetConnections` 直接读不到）。
+
+**根因**：游戏放线走的是 `Wire.OnSpawn → Game.Instance.electricalConduitSystem.AddToNetworks(cell, this, false)`
+再配合建造工具设连接位；手动拼管理器层积木，顺序/时机错一个就不生效。
+
+**判断电有没有通**：只能看电池 `joules` 是否在涨（`/v1/buildings`），**不能看 `operational`**。

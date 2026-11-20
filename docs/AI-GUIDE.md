@@ -36,6 +36,11 @@ curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/meta
 
 **三个最容易踩的坑，现在就记住**：
 
+0. **⚠️ `operational=true` 不代表通电！**（最容易骗到结论的一条）
+   `operational` 是 `Operational.IsOperational` = "**建筑完好、在运转**"，**缺电时照样是 true**。
+   判断"电有没有通"只能看：**电池 `joules` 是否在涨**（`/v1/buildings` 的 `joules` / `joulesCapacity`）、
+   或用电器是否真的在工作。**别拿 `operational` 当供电判据** —— 它比 `placed:true` 更危险，
+   `placed` 至少还能看见建筑，`operational` 直接骗到结论层。
 1. **token 是全量校验**：即使从 `127.0.0.1` 发请求，不带 `X-Oni-Token` 也是 `401`。
 2. **键名是小写 `"token"`**，不是 `"Token"`；按大写找会拿到空串然后一路 401。
 3. **写操作先 `dryRun`（但只对部分接口有效）**：`dryRun` **只在**打标记批次（`/v1/job` 的

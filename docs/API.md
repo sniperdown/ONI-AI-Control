@@ -501,7 +501,10 @@ print("top elements", list(st["elements"]["items"].items())[:5])
   offset=0 时：total = count + notEmittedDueToLimit
   同一 offset/limit：count_all = count_fog + filteredByFog
   ```
-- **字段**：`prefabId / x / y / cell / worldId / underConstruction / operational / enabled / markedForDeconstruct`。
+- **字段**：`prefabId / x / y / cell / worldId / underConstruction / operational / enabled / markedForDeconstruct`，
+  **电池另有** `joules`（当前电量，J）/ `joulesCapacity`（容量，J），其它建筑为 `null`。
+  ⚠️ **`operational` 不表示通电**（它只表示建筑完好、在运转，缺电时仍是 true）；
+  判断供电要看 `joules` 是否在涨。
   `enabled` 为 `null` 表示该建筑没有启用/禁用概念（如砖块）。
   额外加 `?names=1` 时每条多一个 `name`（本地化中文名），响应顶层 `namesIncluded` 如实报告。
 - 温度、材料、是否在用等**暂不提供**（字段越多 AI 读起来越贵）。

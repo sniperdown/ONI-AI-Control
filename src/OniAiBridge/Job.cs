@@ -1117,6 +1117,31 @@ namespace OniAiBridge
         //   * `confirm:true` ⇒ **真放置**：走 `BuildTool.Activate(def, def.DefaultElements())` + `OnLeftClickDown(Grid.CellToPos(cell))`
         //     （玩家同一条建造路径；校验未过则拒绝放置，报 `BUILD_INVALID`）
         // ⚠️ 校验本身不改存档；误报"能建"的代价比误建小得多。
+        /// <summary>
+        /// 这个 prefab 是不是"可与建筑共格"的管线/电线类。
+        ///
+        /// ★ 0.97.3 修 bug1：ONI 的标准接法是"电线/管道直接铺在机器所在格内"
+        ///   （Wire 与 Building 各占不同 ObjectLayer，同格共存是常态）。
+        ///   原来的占用预检扫**所有层**找 Building/BuildingUnderConstruction ⇒
+        ///   在机器格放 Wire 永远 409 CELL_OCCUPIED ⇒ 电网建不起来 ⇒ 氧气扩散器/打浆机/
+        ///   充电器/制作台全不可用（早期电力-氧气-食物循环被整个堵死）。
+        ///   ⇒ 管线/电线类**跳过占用预检**，交给游戏自己的 IsValidPlaceLocation 判。
+        /// </summary>
+        static bool IsUtilityLayerPrefab(BuildingDef def)
+        {
+            if (def == null) return false;
+            try
+            {
+                ObjectLayer ol = def.ObjectLayer;
+                return ol == ObjectLayer.Wire
+                    || ol == ObjectLayer.LogicWire
+                    || ol == ObjectLayer.GasConduit
+                    || ol == ObjectLayer.LiquidConduit
+                    || ol == ObjectLayer.SolidConduit
+                    || ol == ObjectLayer.TravelTube;
+            }
+            catch { return false; }
+        }
         static string BuildExecute(string body, out int status, out string code, out string message, out string details)
         {
             status = 200; code = null; message = null; details = null;
@@ -1124,7 +1149,7 @@ namespace OniAiBridge
             int x, y, worldId = -1;
             string prefabId = MatchString(body, "prefabId");
             Log.Info("[build] 参数 prefabId=[" + (prefabId ?? "<null>") + "] validateOnly=[" + MatchString(body, "validateOnly") + "] confirm=[" + MatchString(body, "confirm") + "] orientation=[" + (MatchString(body, "orientation") ?? "<null>") + "]");
-            bool validateOnly = false, confirm = false;
+            bool validateOnly = false, confirm = false, forcePlace = false;
             string orientationReq = MatchString(body, "orientation");
             string placeMode = MatchString(body, "placeMode");
             string setFields = MatchString(body, "setFields");   // 逗号分隔：lastDragCell / downPos / lastCell（按需逐步加，便于单独验证）
@@ -1187,9 +1212,9 @@ namespace OniAiBridge
 
             int cell = -1, foundWorld = -1;
             string occupiedPrefab = null; bool occupiedUnderConstruction = false; int occupiedCell = -1;
-            bool found = false, valid = false;
+            bool found = false, valid = false, buildable = true;
             int footprintW = 1, footprintH = 1;   // 建筑占地尺寸（WidthInCells × HeightInCells）；多格建筑总是输出
-            string gameReason = null, defName = null, failCode = null, failMsg = null;
+            string gameReason = null, defName = null, failCode = null, failMsg = null, buildBlockedReason = null, placementMissing = null;
 
             MainThread.Invoke(() =>
             {
@@ -1255,6 +1280,11 @@ namespace OniAiBridge
                                 }
                             }
                         }
+                        // ★ 0.97.3：管线/电线类允许与建筑共格（ONI 标准接法），跳过占用判定
+                        if (occupiedCell >= 0 && IsUtilityLayerPrefab(def))
+                        {
+                            occupiedCell = -1; occupiedPrefab = null; occupiedUnderConstruction = false;
+                        }
                         if (occupiedCell >= 0)
                         {
                             failCode = "CELL_OCCUPIED";
@@ -1265,6 +1295,49 @@ namespace OniAiBridge
                     }
 
                     valid = def.IsValidPlaceLocation(preview, cell, orientation, out reason);
+
+                    // ★ 0.97.3 修 bug3（口径：**不拒、只报**）
+                    //   `IsValidPlaceLocation` 只管"蓝图放不放得下"；"放下去建不建得成"另有一说。
+                    //   盲测实录：人力发电机放在 CO₂ 格、下方无地面 ⇒ 游戏画面明写「无效的建造位置」
+                    //   红叹号，而 build 回 placed:true ⇒ AI 以为成功再也不管它。
+                    //   但游戏本身允许"先画草图后补条件"（实心岩石上放蓝图、挖通再建是自带功能），
+                    //   拒掉会让 AI **没法规划** ⇒ 只放 + 报诊断（buildable / placementMissing / reason）。
+                    try { buildable = def.IsValidBuildLocation(preview, Grid.CellToPos(cell), orientation, false); }
+                    catch { buildable = true; }   // 取不到就不猜（按可建处理）
+                    if (!buildable)
+                    {
+                        try
+                        {
+                            int solidInFoot = 0;
+                            int dwn = 1, dhn = 1;
+                            try { dwn = def.WidthInCells; dhn = def.HeightInCells; } catch { }
+                            if (dwn <= 0) dwn = 1; if (dhn <= 0) dhn = 1;
+                            for (int oy2 = 0; oy2 < dhn && oy2 < 4; oy2++)
+                                for (int ox2 = 0; ox2 < dwn && ox2 < 4; ox2++)
+                                {
+                                    int cc2 = Grid.XYToCell(x + ox2, y + oy2);
+                                    if (Grid.IsValidCell(cc2) && Grid.IsSolidCell(cc2)) solidInFoot++;
+                                }
+                            bool needsFoundation = false;
+                            try { needsFoundation = def.ContinuouslyCheckFoundation; } catch { }
+                            if (solidInFoot > 0)
+                            {
+                                placementMissing = "solid_cells";
+                                buildBlockedReason = "占地位有 " + solidInFoot + " 格实心方块 ⇒ 需要先挖开这些格子";
+                            }
+                            else if (needsFoundation)
+                            {
+                                placementMissing = "ground_support";
+                                buildBlockedReason = "该建筑需要下方实心地面支撑，现在下方是空的（悬空）";
+                            }
+                            else
+                            {
+                                placementMissing = "unknown";
+                                buildBlockedReason = "游戏判定 IsValidBuildLocation=false（具体缺什么未能归类）";
+                            }
+                        }
+                        catch { placementMissing = "unknown"; }
+                    }
                     gameReason = reason;                     // ★ 原样返回游戏自己给的理由
 
             // ★ M6.47（据实测更正）：游戏自己的 `IsValidPlaceLocation` **已经校验整个占地**
@@ -1379,6 +1452,11 @@ namespace OniAiBridge
                                         catch { }
                                     }
                                 }
+                            }
+                            // ★ 0.97.3：同上，管线/电线允许共格
+                            if (occupiedCell >= 0 && IsUtilityLayerPrefab(def2))
+                            {
+                                occupiedCell = -1; occupiedPrefab = null; occupiedUnderConstruction = false;
                             }
                             if (occupiedCell >= 0)
                             {
@@ -2015,6 +2093,9 @@ namespace OniAiBridge
                     }
                 }
                 sbp.Append(",\"underConstruction\":").Append(underConstruction ? "true" : "false");
+                sbp.Append(",\"buildable\":").Append(buildable ? "true" : "false");
+                if (!buildable) sbp.Append(",\"placementMissing\":").Append(Snap.Str(placementMissing ?? "unknown"));
+                if (!string.IsNullOrEmpty(buildBlockedReason)) sbp.Append(",\"buildBlockedReason\":").Append(Snap.Str(buildBlockedReason));
                 sbp.Append(",\"requestedCell\":").Append(cell);
                 sbp.Append(",\"foundCell\":").Append(foundCell);
                 sbp.Append(",\"foundX\":").Append(foundX).Append(",\"foundY\":").Append(foundY);

@@ -50,7 +50,8 @@ namespace OniAiBridge
             string low = s.ToLowerInvariant();
             if (low.Contains("退出") || low.Contains("quit") || low.Contains("exit")) return true;
             if (s.Contains("迁移") || s.Contains("更新存档")) return true;
-            if (low.Contains("migration")) return true;
+            // ★ 0.97.3：同上，避免 "Immigration" 被误判（打印门/移民屏是正常功能）
+            if (low.Contains("migration") && !low.Contains("immigration")) return true;
             return false;
         }
 
@@ -58,7 +59,19 @@ namespace OniAiBridge
         static bool IsUnderMigration(string path)
         {
             if (string.IsNullOrEmpty(path)) return false;
-            if (path.IndexOf("Migration", System.StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            // ★ 0.97.3 修 bug：原来子串匹配 "Migration" 把打印门的 `Immigration`（移民屏）也封了
+            //   ⇒ 打印门点不开、400 NOT_ALLOWED。改成按路径段精确匹配。
+            {
+                string[] segs = path.Split('/');
+                for (int i = 0; i < segs.Length; i++)
+                {
+                    string s = segs[i];
+                    if (string.IsNullOrEmpty(s)) continue;
+                    if (string.Equals(s, "Migration", System.StringComparison.OrdinalIgnoreCase)) return true;
+                    if (s.StartsWith("Migration", System.StringComparison.OrdinalIgnoreCase)
+                        && (s.Length == 9 || !char.IsLetter(s[9]))) return true;
+                }
+            }
             return false;
         }
         public static string Click(string body, out int status, out string code, out string message)

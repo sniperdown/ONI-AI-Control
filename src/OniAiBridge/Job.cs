@@ -739,6 +739,7 @@ namespace OniAiBridge
             int failSampleCount = 0;
             bool digToolMissing = false;
             var listedCells = listCells ? new StringBuilder() : null;
+            var reachCells = new System.Collections.Generic.List<int>();   // 0.100.1：可达性标注用
             int listed = 0;
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
@@ -792,6 +793,7 @@ namespace OniAiBridge
                                                     int? pa = SetPriorityAndReadBack(placed, priority);
                                                     if (!pa.HasValue || pa.Value != priority) priorityMismatch++;
                                                 }
+                                                if (reachCells.Count < 400) reachCells.Add(Grid.XYToCell(xx, yy));
                                                 if (listCells) AppendCellListed(listedCells, ref listed, xx, yy, "marked");
                                                 continue;
                                             }
@@ -916,6 +918,21 @@ namespace OniAiBridge
             if (listCells)
             {
                 sb.Append(",\"cellsListed\":[").Append(listedCells).Append(']');
+            }
+            // 0.100.1：可达性直接挂在响应里（AI 不会主动去查 /v1/reach）
+            {
+                int rOmitted, rUnreach;
+                string rJson = Reach.Annotate(reachCells, 120, out rOmitted, out rUnreach);
+                Log.Info("[reach] region dig: reachCells=" + reachCells.Count + " json=" + (rJson == null ? "null" : "ok(" + rJson.Length + ")"));
+                if (rJson != null)
+                {
+                    sb.Append(",\"reach\":").Append(rJson);
+                    sb.Append(",\"reachSummary\":{\"checked\":").Append(Math.Min(reachCells.Count, 120))
+                      .Append(",\"unreachable\":").Append(rUnreach)
+                      .Append(",\"omitted\":").Append(rOmitted)
+                      .Append(",\"note\":").Append(Snap.Str("unreachable>0 = 这些标记小人现在够不到（need_dig 要挖通 / need_ladder 要搭梯子 / no_floor 站不住 / blocked_by_liquid 被水挡）。标记照旧已下，不拦；但别指望马上有人去干"))
+                      .Append("}");
+                }
             }
             sb.Append(",\"note\":").Append(Snap.Str(
                 "applied=本次新标记，alreadyMarked=本来就有（不算失败），rejected=按原因分类；"
@@ -2214,6 +2231,14 @@ namespace OniAiBridge
                 }
                 sbp.Append(",\"underConstruction\":").Append(underConstruction ? "true" : "false");
                 sbp.Append(",\"buildable\":").Append(buildable ? "true" : "false");
+                // 0.100.1：可达性也挂在这里（AI 不会主动查 /v1/reach）
+                {
+                    int rO2, rU2;
+                    var lst1 = new System.Collections.Generic.List<int>(1);
+                    lst1.Add(cell);
+                    string rj1 = Reach.Annotate(lst1, 1, out rO2, out rU2);
+                    if (rj1 != null && rj1.Length > 2) sbp.Append(",\"reach\":").Append(rj1);
+                }
                 if (!buildable) sbp.Append(",\"placementMissing\":").Append(Snap.Str(placementMissing ?? "unknown"));
                 if (!string.IsNullOrEmpty(buildBlockedReason)) sbp.Append(",\"buildBlockedReason\":").Append(Snap.Str(buildBlockedReason));
                 sbp.Append(",\"requestedCell\":").Append(cell);

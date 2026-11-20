@@ -3496,3 +3496,13 @@ POST /v1/reach
 * 都没到 ⇒ 看该格是实心/液体/无地板/真不连通
 
 实测：20 格 **67 ms**；小人自己的格子判 `reachable:true`；梯子顶可站（`Grid.HasLadder[下方]` 也算有支撑）。
+
+#### 3.45.1 `dig` / `build` 响应里的 `reach` / `reachSummary`（0.100.1）
+
+**可达性已经挂在必经之路上**（AI 不会主动去查独立端点）：
+* 区域 `dig`（`x0..y1`）与 `build` 的响应里自带 `reach[]` + `reachSummary{checked,unreachable,omitted,note}`
+* 判定口径 = **"能不能到它旁边干活"**（自身或 4 邻格可达）——挖掘目标本身是实心块也能正常判
+* `reason` 与 `/v1/reach` 完全同一套词：`need_dig` / `need_ladder` / `no_floor` / `blocked_by_liquid` / `disconnected`
+* 上限 **120 格**（超出给 `omitted`），实测 118 格 **23 ms**
+* **只标注、不拒绝**：标记照旧下（条件不满足但可提前规划）
+* 未覆盖：单格 `dig`（`{"type":"dig","x":..,"y":..}`）目前**不带** `reach`，要判就用 `/v1/reach`

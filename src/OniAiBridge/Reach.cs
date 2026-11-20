@@ -84,22 +84,7 @@ namespace OniAiBridge
                     // 起点缺省 = 总部
                     int start = -1;
                     if (sx >= 0 && sy >= 0) start = Grid.XYToCell(sx, sy);
-                    if (start < 0 || !Grid.IsValidCell(start))
-                    {
-                        var builds = Components.BuildingCompletes != null ? Components.BuildingCompletes.Items : null;
-                        if (builds != null)
-                        {
-                            for (int i = 0; i < builds.Count; i++)
-                            {
-                                var b = builds[i];
-                                if (b == null) continue;
-                                var def = (b as KMonoBehaviour) != null ? b.GetComponent<Building>() : null;
-                                string pid = null;
-                                try { pid = def != null && def.Def != null ? def.Def.PrefabID : null; } catch { }
-                                if (pid == "Headquarters") { start = Grid.PosToCell(b.transform.position); break; }
-                            }
-                        }
-                    }
+                    if (start < 0 || !Grid.IsValidCell(start)) start = ResolveStart();
                     if (start < 0 || !Grid.IsValidCell(start))
                     {
                         fatal = "找不到起点（没给 from，也没找到 Headquarters）";
@@ -224,6 +209,101 @@ namespace OniAiBridge
                 }
             }
             return dist;
+        }
+
+        /// <summary>起点 = 总部所在格（找不到返回 -1）。</summary>
+        internal static int ResolveStart()
+        {
+            try
+            {
+                var builds = Components.BuildingCompletes != null ? Components.BuildingCompletes.Items : null;
+                if (builds == null) return -1;
+                for (int i = 0; i < builds.Count; i++)
+                {
+                    var b = builds[i];
+                    if (b == null) continue;
+                    Building def = null;
+                    try { def = b.GetComponent<Building>(); } catch { }
+                    string pid = null;
+                    try { pid = def != null && def.Def != null ? def.Def.PrefabID : null; } catch { }
+                    if (pid == "Headquarters") return Grid.PosToCell(b.transform.position);
+                }
+            }
+            catch { }
+            return -1;
+        }
+
+        /// <summary>
+        /// 给一批格子做可达性标注（给 dig/build 响应"挂在必经之路上"用）。
+        /// **只算一次 BFS**（两条），逐格分类，成本与格数线性；超过 cap 就截断并报数。
+        /// 返回 JSON 数组；失败返回 null（调用方就不加这个字段，别让主流程失败）。
+        /// </summary>
+        internal static string Annotate(System.Collections.Generic.List<int> cells, int cap, out int omitted, out int unreachableCount)
+        {
+            omitted = 0; unreachableCount = 0;
+            if (cells == null || cells.Count == 0) return null;
+            try
+            {
+                int start = ResolveStart();
+                if (start < 0) return null;
+                var walk = Bfs(start, false, 20000);
+                var ladder = Bfs(start, true, 20000);
+
+                var sb = new StringBuilder(1024);
+                sb.Append('[');
+                int n = 0;
+                for (int i = 0; i < cells.Count; i++)
+                {
+                    int cell = cells[i];
+                    if (!Grid.IsValidCell(cell)) continue;
+                    if (n >= cap) { omitted = cells.Count - i; break; }
+
+                    int dw, dl;
+                    bool hasW = walk.TryGetValue(cell, out dw);
+                    bool hasL = ladder.TryGetValue(cell, out dl);
+                    bool solid = false, liquid = false;
+                    int depthKg = 0;
+                    // ★ 0.100.1：挖掘/建造的**对象格本身站不上去**（实心/有建筑），
+                    //   真正的判据是"**能不能到它旁边干活**" ⇒ 自身或 4 邻格有一个能走到即可。
+                    {
+                        int bestW = int.MaxValue, bestL = int.MaxValue;
+                        for (int d2 = 0; d2 < 4; d2++)
+                        {
+                            var cxy = Grid.CellToXY(cell);
+                            int nc = Grid.XYToCell(cxy.x + (d2 == 0 ? 1 : d2 == 1 ? -1 : 0), cxy.y + (d2 == 2 ? 1 : d2 == 3 ? -1 : 0));
+                            if (!Grid.IsValidCell(nc)) continue;
+                            int v;
+                            if (walk.TryGetValue(nc, out v) && v + 1 < bestW) bestW = v + 1;
+                            if (ladder.TryGetValue(nc, out v) && v + 1 < bestL) bestL = v + 1;
+                        }
+                        if (!hasW && bestW != int.MaxValue) { hasW = true; dw = bestW; }
+                        if (!hasL && bestL != int.MaxValue) { hasL = true; dl = bestL; }
+                    }
+                    try { solid = Grid.Solid[cell]; } catch { }
+                    try { var el = Grid.Element[cell]; if (el != null && el.state == Element.State.Liquid) { liquid = true; depthKg = (int)Grid.Mass[cell]; } } catch { }
+
+                    string reason = null;
+                    if (!hasW)
+                    {
+                        if (hasL) reason = "need_ladder";
+                        else if (solid) reason = "need_dig";
+                        else if (liquid || depthKg > 0) reason = "blocked_by_liquid";
+                        else reason = "no_floor";
+                        unreachableCount++;
+                    }
+                    var xy = Grid.CellToXY(cell);
+                    if (n > 0) sb.Append(',');
+                    sb.Append("{\"x\":").Append(xy.x).Append(",\"y\":").Append(xy.y)
+                      .Append(",\"reachable\":").Append(hasW ? "true" : "false")
+                      .Append(",\"dist\":").Append(hasW ? dw.ToString() : (hasL ? dl.ToString() : "null"))
+                      .Append(",\"reason\":").Append(reason == null ? "null" : Snap.Str(reason))
+                      .Append('}');
+                    n++;
+                }
+                sb.Append(']');
+                return sb.ToString();
+            }
+            catch { return null; }
         }
 
         static bool Passable(int cell, bool allowLadder)

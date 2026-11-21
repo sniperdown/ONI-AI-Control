@@ -72,6 +72,8 @@ namespace OniAiBridge
             if (JobMarks.IsMarkType(t0)) return JobMarks.Execute(t0, body, out status, out code, out message, out details);
             // ★ 0.114.0：取消待办标记（蓝图 / 挖标记 / 拆解标记）—— 玩家等价操作，不挂作弊闸门
             if (CancelJob.IsCancelType(t0)) return CancelJob.Execute(body, out status, out code, out message, out details);
+            // ★ 0.114.2：沙盒的「摧毁」（立即抹掉一格）—— 挂作弊闸门，与 deconstruct 不是一回事
+            if (DestroyJob.IsDestroyType(t0)) return DestroyJob.Execute(body, out status, out code, out message, out details);
             if (t0 == "build" && HasKey(body, "wirePath")) return BuildWirePath(body, out status, out code, out message, out details);
             if (t0 == "dig" && (HasKey(body, "x0") || HasKey(body, "cx"))) return DigRegionExecute(body, out status, out code, out message);
             // M6.13：对象级 type 的区域模式（**不照抄 dig**：格内有歧义就跳过并计数）
@@ -2187,7 +2189,10 @@ namespace OniAiBridge
                 if (invokeExc != null) { sbp.Append(",\"warning\":").Append(Snap.Str(invokeExc)).Append(",\"warningKind\":").Append(Snap.Str("POST_PROCESS_FAILED")); }
                 sbp.Append(",\"spawned\":").Append(cheatPath ? "true" : "false");
                 sbp.Append(",\"jobState\":").Append(Snap.Str(placeMode == "defbuild" ? "cheat-spawned" : (placeMode == "instant" ? "cheat-instant" : (underConstruction ? "under-construction" : "completed"))));
-                sbp.Append(",\"materialsConsumed\":").Append(cheatPath ? "false" : "true");
+                // ★ 0.114.2：沙盒会把 `trybuild` 也变成瞬建 —— 瞬建**不扣材料**（实测：建前建后 onGround 都是 11200 kg）。
+                //   所以口径改成「本次是否真的产生了施工任务」：只有 underConstruction=true 才可能消耗材料。
+                bool instantBuilt = !underConstruction;
+                sbp.Append(",\"materialsConsumed\":").Append((cheatPath || instantBuilt) ? "false" : "true");
                 sbp.Append(",\"target\":{\"x\":").Append(x).Append(",\"y\":").Append(y)
                    .Append(",\"cell\":").Append(cell)
                    .Append(",\"prefabId\":").Append(Snap.Str(placedPrefab ?? prefabId)).Append('}');

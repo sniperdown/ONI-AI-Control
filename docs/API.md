@@ -575,9 +575,10 @@ GET /v1/buildings?limit=2000&offset=2000     -> total=72851, count=2000, hasMore
 判断方法：字段**存在**且值为 `null` = 概念不适用；字段**不存在** = 接口没提供。
 ---
 
-### 3.13 `/v1/door`（**设计草案，未实现**）
+### 3.13 `/v1/door`（**已实现**：normal 派活 + instant 作弊径）
 
-> 状态：**草案**。M6.1 的第一个"手"操作，用来打通「按坐标找建筑 → 拿组件 → 调动作 → 分级回读」整条链。
+> 状态：**已实现并实测**（normal 自 M6.1；instant 于 **0.115.0** 补齐，2026-11-21 实测通过）。
+> 用途：按坐标找门 → 拿 `Door` 组件 → 改控制状态 → 分级回读。
 
 ```
 POST /v1/door
@@ -588,7 +589,7 @@ POST /v1/door
 | 模式 | 触发条件 | 实现 | 生效时机 |
 |---|---|---|---|
 | **normal**（默认） | —— | `Door.QueueStateChange(target)` | **派 chore，等复制人走过去按** |
-| **instant** | 请求带 `"instant": true` **且** `allowCheats==true` 且（沙盒 或 debug） | 反射写 `controlState` + 调 `ApplyControlState()` | 立即 —— **未实现（需要反射，待定）**；当前请求带 `instant:true` ⇒ `400 BAD_REQUEST`（M6.1 只做 normal） |
+| **instant** | 请求带 `"instant": true` **且** `allowCheats==true` 且（沙盒 或 debug） | 反射写 `controlState` + 调 `ApplyControlState()` | 立即 —— **0.115.0 已实现**；未开闸时 `403`。实测 `open→Opened / lock→Locked / auto→Auto` 均 `jobState=done` |
 
 ⚠️ **不用 `DebugHandler.InstantBuildMode` 那条捷径**：IL 里 `if (DebugHandler.InstantBuildMode) { ApplyRequestedControlState(); return; }`
 是"瞬间建造模式"的副作用，语义不对，而且会改全局游戏状态。
@@ -1324,13 +1325,22 @@ file 必填 → confirm:true → 白名单（必须是 /v1/saves 里出现过的
 `file` 不在列表里 ⇒ `404 SAVE_NOT_FOUND`；**只有"本来要真加载"时才返回 501**。
 **501 这条路径不会改动任何游戏状态。**
 
-### 3.24 `POST /v1/job` `type=build` —— **作弊生成已可用；玩家等价建造未实现**（M6.39）
+### 3.24 `POST /v1/job` `type=build` —— **玩家等价建造已可用（`trybuild`）；另有两条作弊径**（M6.39 起，2026-11-21 修订）
 
-> 🔴 **先说结论（发布前必读）**
+> ✅ **先说结论（2026-11-21 修订版）**
 >
-> **「玩家等价建造」（点分类 → 点建筑 → 世界坐标放置 → 小人搬材料施工）我们没有实现，也不能在近期实现。**
-> 现在能用的只有 **`placeMode:"instant"`（作弊）** 和 **`placeMode:"defbuild"`（作弊，直造）**。
-> 两者都：**不扣材料、不产生建造 chore、不需要小人施工**，且都必须过作弊闸门。
+> **`placeMode:"trybuild"` 就是玩家等价建造**：放下蓝图 → 复制人搬材料来建 → 建成。**已实测通过**：
+> 平台上方 `y=211` 的 4 个 Tile 蓝图全部被小人建成（材料按 200 kg/块扣，`underConstruction` 从 true 变 false）。
+> 早先"未实现"的说法是只有 `instant` 能跑时留下的，**已作废**。
+>
+> 另外两条是作弊径，供测试/沙盒用：`placeMode:"instant"`、`placeMode:"defbuild"` ——
+> 不扣材料、不产生建造 chore、不需要小人，都必须过作弊闸门。
+>
+> ⚠️ **沙盒开启时 `trybuild` 也会瞬间建成**（实测），此时响应 `jobState=completed`；
+> 想测"小人真去施工"必须先关沙盒。
+>
+> ⚠️ **`placed:true` ≠ 会建成**：蓝图要被建成，必须有"小人能站到且与蓝图相邻"的格子；
+> 做不到的蓝图会**永久挂着、没人来建**（响应里的 `workPos.verdict=no_standable_neighbor` 就是在报这件事）。
 
 #### 为什么玩家等价建造做不到（实测 + IL 证据）
 

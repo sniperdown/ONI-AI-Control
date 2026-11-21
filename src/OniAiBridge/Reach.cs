@@ -361,6 +361,72 @@ namespace OniAiBridge
             catch { return null; }
         }
 
+        /// <summary>
+        /// 这个"活"（挖/建/拆）到底有没有人能来干 —— 给 `/v1/job` 单格响应用的紧凑块。
+        /// 实测（2026-11-21）：标记挂上就一定回 `marked=true`，但若目标**没有任何可站立且可达的邻格**，
+        /// 小人取到 chore 会**立刻放弃**，标记永久留着、永不消失。详见 docs/WORK-RANGE.md。
+        /// 只报确定的事实（邻格数 + 判定 + 最近小人偏移），不推测更大的"作业矩形"。
+        /// </summary>
+        internal static string WorkPos(int cell)
+        {
+            try
+            {
+                if (!Grid.IsValidCell(cell)) return null;
+                var xy = Grid.CellToXY(cell);
+                int sn = 0; string example = null;
+                int[] nx = { xy.x + 1, xy.x - 1, xy.x, xy.x };
+                int[] ny = { xy.y, xy.y, xy.y + 1, xy.y - 1 };
+                for (int i = 0; i < 4; i++)
+                {
+                    int nc = Grid.XYToCell(nx[i], ny[i]);
+                    if (!Grid.IsValidCell(nc)) continue;
+                    if (!Passable(nc, true)) continue;
+                    bool? nv = null;
+                    try { nv = Move.AnyCanReach(nc); } catch { }
+                    if (nv == false) continue;
+                    sn++;
+                    if (example == null) example = nx[i] + "," + ny[i];
+                }
+
+                // 最近的小人（只用来给 dx/dy，便于人读）
+                int dx = 0, dy = 0; string who = null;
+                try
+                {
+                    object dupe = null;
+                    var ids = Components.LiveMinionIdentities != null ? Components.LiveMinionIdentities.Items : null;
+                    if (ids != null && ids.Count > 0) dupe = ids[0];
+                    if (dupe != null)
+                    {
+                        var mi = dupe as MinionIdentity;
+                        if (mi != null)
+                        {
+                            int dc = Grid.PosToCell(mi);
+                            if (Grid.IsValidCell(dc))
+                            {
+                                var dxy = Grid.CellToXY(dc);
+                                dx = xy.x - dxy.x; dy = xy.y - dxy.y;
+                                who = mi.GetProperName();
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                var sb = new StringBuilder(160);
+                sb.Append("{\"standableNeighbors\":").Append(sn);
+                sb.Append(",\"example\":").Append(example == null ? "null" : Snap.Str(example));
+                sb.Append(",\"verdict\":").Append(Snap.Str(sn > 0 ? "will_do" : "no_standable_neighbor"));
+                sb.Append(",\"nearestDupe\":").Append(who == null ? "null" : Snap.Str(who));
+                sb.Append(",\"dx\":").Append(who == null ? "null" : dx.ToString());
+                sb.Append(",\"dy\":").Append(who == null ? "null" : dy.ToString());
+                if (sn == 0)
+                    sb.Append(",\"hint\":").Append(Snap.Str("目标四周没有可站立且可达的格子 ⇒ 小人取到 chore 会立刻放弃，标记不会消失"));
+                sb.Append('}');
+                return sb.ToString();
+            }
+            catch { return null; }
+        }
+
         static bool Passable(int cell, bool allowLadder)
         {
             bool impassable = false;

@@ -92,15 +92,21 @@ t34 (114,223) 挖掉 (113,226)   dy=+3
 理由：现在接口对"够不着"的标记只回 `ok` + `marked=true`，AI 会以为安排好了，
 而标记会被**永久搁置且不会消失**（也没有 cancel 接口清掉它）。
 
-## 六、已实现（0.113.1）
+## 六、已实现
 
-`/v1/reach` 与 dig/build 响应里的 `reach` 标注，每格多了一个 `workPos` 块（**只报能确定的事实**）：
+**0.113.1**：`/v1/reach` 与 dig/build 响应里的 `reach` 标注，每格多一个 `workPos` 块。
+
+**0.113.2**：`workPos` 同时挂到 **`/v1/job` 的单格响应**上（dig / build / deconstruct / harvest
+等走通用 builder 的都覆盖），AI 在**下标记那一刻**就能看到，不用再单独查：
 
 ```json
 "workPos": {
   "standableNeighbors": 2,          // 目标 4 邻里"可站立且游戏判可达"的格数
   "example": "114,226",
-  "verdict": "will_do"              // 或 no_standable_neighbor
+  "verdict": "will_do",             // 或 no_standable_neighbor
+  "nearestDupe": "吉滋镆",
+  "dx": -2, "dy": 3,
+  "hint": "…"                       // 仅在 verdict=no_standable_neighbor 时出现
 }
 ```
 

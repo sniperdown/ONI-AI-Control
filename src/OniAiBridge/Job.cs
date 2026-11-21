@@ -276,6 +276,8 @@ namespace OniAiBridge
             sb.Append(",\"diggableFound\":").Append(diggableAfter ? "true" : "false");
             sb.Append(",\"alreadyMarkedBefore\":").Append(diggableBefore ? "true" : "false");
             sb.Append(",\"shortCircuited\":").Append(shortCircuited ? "true" : "false");
+            // ★ 0.113.2：有没有人能来干这格（dig 单格路径）
+            try { string wp = Reach.WorkPos(cell); if (wp != null) sb.Append(",\"workPos\":").Append(wp); } catch { }
             bool objectsAvailable = objectsBefore.HasValue && objectsAfter.HasValue;
             sb.Append(",\"objectsAvailable\":").Append(objectsAvailable ? "true" : "false");
             sb.Append(",\"objectsBefore\":").Append(NumOrNull(objectsBefore));
@@ -2188,6 +2190,8 @@ namespace OniAiBridge
                    .Append(",\"cell\":").Append(cell)
                    .Append(",\"prefabId\":").Append(Snap.Str(placedPrefab ?? prefabId)).Append('}');
                 sbp.Append(",\"footprint\":{\"w\":").Append(footprintW).Append(",\"h\":").Append(footprintH).Append('}');
+                // ★ 0.113.2：蓝图放下去之后，有没有人真能来建（判据见 docs/WORK-RANGE.md）
+                try { string wp = Reach.WorkPos(cell); if (wp != null) sbp.Append(",\"workPos\":").Append(wp); } catch { }
                 // ★ M6.56：材料块只报数、不拦（小僵拍板：没材料也能画蓝图）
                 {
                     string catText3 = null;
@@ -2972,6 +2976,8 @@ namespace OniAiBridge
             sb.Append(",\"prefabId\":").Append(Snap.Str(prefabId)).Append('}');
             sb.Append(",\"alreadyMarkedBefore\":").Append(alreadyMarked ? "true" : "false");
             sb.Append(",\"shortCircuited\":").Append(shortCircuited ? "true" : "false");
+            // ★ 0.113.2：这个活到底有没有人能来干（判据见 docs/WORK-RANGE.md）
+            try { string wp = Reach.WorkPos(cell); if (wp != null) sb.Append(",\"workPos\":").Append(wp); } catch { }
             bool avail = objectsBefore.HasValue && objectsAfter.HasValue;
             sb.Append(",\"objectsAvailable\":").Append(avail ? "true" : "false");
             sb.Append(",\"objectsBefore\":").Append(NumOrNull(objectsBefore));

@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 ONI AI Bridge contributors
+Copyright (c) 2026 ONI AI Control contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+关于游戏本体与商标（非许可证条款，仅为说明）：
+
+本项目是《缺氧》(Oxygen Not Included) 的第三方 mod，与 Klei Entertainment 无隶属关系，
+也未获其背书。游戏本体、游戏资源与相关商标归 Klei Entertainment 所有。
+使用本项目仍需拥有并遵守游戏本体的许可协议。

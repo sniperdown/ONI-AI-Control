@@ -1,3 +1,67 @@
+## [里程碑] 1.0 / 0.116.0 —— 首个对外版本：改名 ONI AI Control，接口层收口（2026-11-21）
+
+**一句话**：把《缺氧》的**读**、**判断能不能干**、**动手（普通 + 作弊两档）**这三层做成一套本机 HTTP 接口，
+并补齐了"撤回 / 删除 / 门 / 作息"四块原本缺的手。
+
+> 仓库：`ONI-AI-Control` ｜ 游戏内显示名：`ONI AI Control` ｜ **内部标识仍为 `OniAiBridge`**
+> （DLL 名、`staticID`、配置目录 `mods/config/OniAiBridge/` 均未变，老配置继续有效）
+
+### 这一版新增的手
+
+| 能力 | 端点 | 说明 |
+|---|---|---|
+| **撤回标记** | `POST /v1/job {"type":"cancel"}` | 蓝图/拆解走 `GameHashes.Cancel` 事件；**挖掘/拖地要销毁 placer**（只发事件无效）。`cleared` 三态 + `pendingFrame` |
+| **沙盒摧毁** | `POST /v1/job {"type":"destroy"}` | 反射 `GameUtil.DestroyCell(cell, CellEventLogger.Instance.SandBoxTool, true, true)`；`destroyNaturalBackwall` 必须 true，否则天然物块不掉。挂作弊闸门 |
+| **门的立即控制** | `POST /v1/door {"instant":true}` | 反射写 `controlState` + `ApplyControlState()`；`normal` 仍是派活等小人按 |
+| **作息表** | `GET/POST /v1/schedule` | 读 24 小时区块与挂的人；`assign` 指派复制人、`set_block` 改某小时区块（回读判定 + 回显反射签名） |
+| **生成复制人** | `POST /v1/dupes/spawn` | 作弊（`Gate.CheatsUnlocked`）；`debug:false` 默认普通掷点 |
+
+### 这一版纠正的判据（都是实测打脸得来的）
+
+1. **`/v1/reach` 主判据换成游戏自己的 `Navigator.CanReach`**（0.113.0），自研 BFS 降级为 `bfsReachable` 旁注 + `judge` 字段标注。
+   原因：BFS 只走四邻域，**整条对角斜通道漏判**（泥巴区 83 个空气格里 14 格）；且**没算角色占 2 格高**，
+   梯子顶被天花板压住、挖开但头顶仍实心的格子会误判成可达。
+2. **作业范围是"每个站位"的矩形**，不是"小人当前位置"的矩形：`|dx| ≤ 2`、`−2 ≤ dy ≤ +3`，
+   且目标必须**有可站立的邻格**；小人会沿梯子换站位够更远的格（实测 9 个标记被一次干完）。
+   响应里给 `workPos.standableNeighbors` + `verdict`（`will_do` / `no_standable_neighbor`）。
+3. **`placed:true` ≠ 会建成**、**`marked=true` ≠ 会被干**：够不着的蓝图/标记会**永久挂着且不消失**。
+4. **`KDestroyGameObject` / `DestroyCell` 帧末生效** ⇒ 同帧回读必然看到旧内容，必须报 `pendingFrame`。
+5. **沙盒会把 `trybuild` 也变成瞬建**（且不扣材料）⇒ 想测"小人真去施工"必须先关沙盒；
+   顺带修掉 `materialsConsumed` 在瞬建时谎报 `true`。
+
+### 版本流水（0.97.0 → 0.116.0）
+
+| 版本 | 要点 |
+|---|---|
+| 0.97.2 | 材料性质暴露（`/v1/elements`、`/v1/build-materials`），build 响应自带 candidates |
+| 0.97.3 | 修盲测暴露的三个 bug：电线可放机器格 / `Immigration` 误封 / `placed` 不撒谎 |
+| 0.98.x | `POST /v1/wire` 批量铺线 + 显式连接掩码；`/v1/buildings` 加 `joules` |
+| 0.99.x | 打通"从零建电网"（全局 `electricalConduitSystem` + 占用预检忽略管线） |
+| 0.100.x | 新增 `POST /v1/reach`；可达性挂进 `dig`/`build` 响应；判据改成"能否到旁边干活" |
+| 0.101.x | `POST /v1/move`（`Navigator` 判定 + `GoTo`）；`/v1/reach` 加 `navCanReach` 对比 |
+| 0.102–0.104 | `/v1/saves` 系列（colony / uiIndex / 解析 `.sav` 头给 cycle/dups/baseName）+ 存档名走字符串桥 |
+| 0.106–0.111 | UI 自动化整条链：字符串桥 / `KButton.onClick` 派发 / 坐标点击 / `onClick.DynamicInvoke` / 屏幕几何 |
+| 0.112.0 | `POST /v1/dupes/spawn`（IL 实证两步链）+ 修 `ScreenRectOf` 坐标系（Overlay 画布必须传 `null` camera） |
+| 0.113.x | `reach` 主判据换 `Navigator.CanReach`；`workPos` 进 reach 标注与单格响应 |
+| 0.114.x | `type=cancel`；`type=destroy`；`materialsConsumed` 修正 |
+| 0.115.0 | `/v1/door` 的 `instant` 模式 |
+| 0.116.0 | `/v1/schedule` 读取与修改 |
+
+### 已知缺口（1.0 不做）
+
+- **没有面板**（拍板先发接口层，面板 1.0 之后再做）
+- `SnapshotTool` / `DisconnectTool` 未接
+- 无限流（`rateLimitPerMin` 报 0）
+- `/v1/dupes/{id}`、`/v1/catalog/{kind}` 子路径未做
+- 复制人**优先级**未做（作息已做）
+- **任务队列 / 多小人分工这一层完全没有** —— 现在只能"下标记，然后自己盯"
+
+详见 [`docs/RELEASE-1.0-STATUS.md`](docs/RELEASE-1.0-STATUS.md)、[`docs/API.md`](docs/API.md)、
+[`docs/2026-11-21-实测汇总.md`](docs/2026-11-21-实测汇总.md)、[`docs/WORK-RANGE.md`](docs/WORK-RANGE.md)、
+[`docs/CANCEL.md`](docs/CANCEL.md)、[`docs/DESTROY.md`](docs/DESTROY.md)、[`docs/SCHEDULE.md`](docs/SCHEDULE.md)。
+
+---
+
 ## [新增] 0.96.1 / M7.4 —— WorkBuddy 那条链路补上"对得上号"：`reqId` + 幂等回放 + `/v1/journal`（2026-11-19）
 
 **背景**：`shared/2026-11-19-workbuddy-acceptance/` 那三轮验收暴露的不是"AI 不聪明"，是**渠道不可靠**：

@@ -94,3 +94,50 @@ POST /v1/job
 ## 沙盒模式下
 
 沙盒把 `build` 变成瞬建，但**挖掘/取消/拆解依旧走标记**，`cancel` 行为不变（实测）。
+
+---
+
+# 0.116.1 修正（用反编译源码核对后）
+
+## 修掉的谎报
+
+`cleared` 之前只查 `Constructable` ⇒ **已建成的建筑**（没有 Constructable）被算成 `buildingStillThere=false`，
+于是报 `cleared=true`。实测 `(122,209)` 的 `PlasticTile` 取消后仍在，但响应说清干净了。
+
+现在回读拆成四个字段：
+
+```json
+"readback": { "digMarked": false, "deconstructMarked": false,
+              "blueprint": false, "buildingStillThere": true },
+"nothingToCancel": true,
+"cleared": false,
+"jobState": "nothing-to-cancel"
+```
+
+- `blueprint` = 那格还有 `Constructable`（蓝图/在建）
+- `buildingStillThere` = 那格**有建筑**（不管是不是蓝图）
+- `nothingToCancel` = 有建筑但没有待办 ⇒ cancel 无事可做（**不是**"清掉了"）
+
+## 源码核对：`Constructable.OnCancel` 并不销毁蓝图
+
+反编译（`shared/refs/oni-U59-744825/src/Constructable.cs`）里它只做三件事：
+
+```csharp
+private void OnCancel(object _ = null)
+{
+    if (DetailsScreen.Instance != null) DetailsScreen.Instance.Show(show: false);
+    ClearMaterialNeeds();
+    ClearPendingUproots();
+}
+```
+
+蓝图的消失是**后续链条**的效果（实测 3 秒内确实消失），不是 Cancel 方法里销毁的。
+所以"发 Cancel 事件就能撤掉蓝图"这个**结论**成立，但**机制描述**以前写错了。
+
+## 三种用例的最终验收（0.116.1）
+
+| 用例 | 结果 |
+|---|---|
+| 悬空蓝图 `(121,208)` → cancel | `cleared=true`, `blueprint=false`，3 秒后格子空 ✅ |
+| 已建成 `PlasticTile (122,209)` → cancel | `cleared=false`, `nothingToCancel=true`, `buildingStillThere=true`，建筑仍在 ✅ |
+| 挖掘标记 → cancel | `destroy-scheduled` + `pendingFrame`，下一帧 `digMarked=false` ✅ |

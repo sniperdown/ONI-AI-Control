@@ -106,7 +106,10 @@ namespace OniAiBridge
             }
 
             // 回读：这三样是"标记型待办"的证据，取消后应当都没了
-            bool digAfter = false, deconAfter = false, blueprintAfter = false;
+            // ★ 0.116.1 修正：以前只查 `Constructable`，于是**已建成的建筑**（没有 Constructable）
+            //   会被算成 buildingStillThere=false ⇒ 谎报 cleared=true。实测：(122,209) 的 PlasticTile
+            //   取消后仍在，但响应说 cleared=true。现在把"建筑存在"与"蓝图存在"分开报。
+            bool digAfter = false, deconAfter = false, blueprintAfter = false, buildingAfter = false;
             try
             {
                 int hitLayer, okL, errL; string errT;
@@ -118,19 +121,23 @@ namespace OniAiBridge
                 var b = JobQuery.FindBuildingAt(cell);
                 if (b != null)
                 {
+                    buildingAfter = true;
                     var d = b.GetComponent<Deconstructable>();
                     if (d != null) deconAfter = d.IsMarkedForDeconstruction();
                     var c = b.GetComponent<Constructable>();
-                    if (c != null) blueprintAfter = true;   // 建筑还在 ⇒ 蓝图没被取消（Constructable 存在即蓝图/在建）
+                    blueprintAfter = c != null;   // 只有还带 Constructable 才是"蓝图/在建"
                 }
             }
             catch { }
+
+            // 这一格压根没有待办（比如是一栋已建成的建筑）⇒ 不是"清掉了"，而是"没得清"
+            bool nothingToCancel = buildingAfter && !blueprintAfter && !digAfter && !deconAfter;
 
             // ★ 0.114.1 实测：`Util.KDestroyGameObject` 是**帧末生效**的，
             //   所以同一帧回读 `digMarked` 仍然是 true。碰到这条路就不能说"没清掉"，
             //   也不能说"清掉了"—— 如实报 `pendingFrame:true` + `cleared:null`，让调用方下一帧再核。
             bool pendingFrame = destroyedSomething;
-            bool? cleared = pendingFrame ? (bool?)null : (!digAfter && !deconAfter && !blueprintAfter);
+            bool? cleared = pendingFrame ? (bool?)null : (nothingToCancel ? (bool?)false : (!digAfter && !deconAfter && !blueprintAfter));
 
             var sb = new StringBuilder(512);
             sb.Append("{\"type\":\"cancel\"");
@@ -143,12 +150,15 @@ namespace OniAiBridge
             sb.Append(",\"modes\":[").Append(LayerJson(touchedKind.ToString())).Append(']');
             sb.Append(",\"readback\":{\"digMarked\":").Append(digAfter ? "true" : "false")
               .Append(",\"deconstructMarked\":").Append(deconAfter ? "true" : "false")
-              .Append(",\"buildingStillThere\":").Append(blueprintAfter ? "true" : "false")
+              .Append(",\"blueprint\":").Append(blueprintAfter ? "true" : "false")
+              .Append(",\"buildingStillThere\":").Append(buildingAfter ? "true" : "false")
               .Append('}');
+            sb.Append(",\"nothingToCancel\":").Append(nothingToCancel ? "true" : "false");
             sb.Append(",\"cleared\":").Append(pendingFrame ? "null" : (cleared.Value ? "true" : "false"));
             sb.Append(",\"pendingFrame\":").Append(pendingFrame ? "true" : "false");
             sb.Append(",\"jobState\":").Append(Snap.Str(
                 hitLayers == 0 ? "nothing-at-cell"
+                : nothingToCancel ? "nothing-to-cancel"
                 : pendingFrame ? "destroy-scheduled"
                 : (cleared.Value ? "cleared" : (triggered > 0 ? "partially-cleared" : "no-op"))));
             sb.Append(",\"note\":").Append(Snap.Str(

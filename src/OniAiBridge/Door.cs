@@ -133,23 +133,36 @@ namespace OniAiBridge
 
                     if (instant)
                     {
-                        // ★ 0.115.0：作弊径 —— 反射写 `controlState` 再调 `ApplyControlState()`。
-                        //   不走 QueueStateChange（那条会派 chore、要小人跑过去）。
-                        //   ⚠️ 也**不用** DebugHandler.InstantBuildMode：那是"瞬间建造"的副作用，会改全局状态。
+                        // ★ 0.116.1：改用**游戏自己的规范路径**（反编译源码实证）：
+                        //     `Door.ApplyRequestedControlState()` 的方法体就是
+                        //        if (requestedState != controlState) { controlState = requestedState;
+                        //            ApplyControlState(); Open(); Close(); }
+                        //     ⇒ 先写 requestedState，再调它；比我们之前"写 controlState + ApplyControlState"更完整
+                        //        （少了 Open()/Close()，门可能只是状态变了、动画/物理没跟上）。
                         var t = door.GetType();
-                        var f = t.GetField("controlState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        var mApply = t.GetMethod("ApplyControlState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        if (f == null || mApply == null)
+                        var fReq = t.GetField("requestedState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        var mApplyReq = t.GetMethod("ApplyRequestedControlState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        if (fReq != null && mApplyReq != null)
                         {
-                            instantNote = "反射没找到 controlState/ApplyControlState（字段=" + (f != null) + " 方法=" + (mApply != null) + "）";
+                            fReq.SetValue(door, (Door.ControlState)target);
+                            mApplyReq.Invoke(door, null);
+                            instantNote = "instant：写 requestedState → ApplyRequestedControlState()（游戏规范路径）";
                         }
                         else
                         {
-                            f.SetValue(door, (Door.ControlState)target);
-                            mApply.Invoke(door, null);
-                            instantNote = "instant：已直接写 controlState 并 ApplyControlState()";
-                            // 立刻把请求态也对齐，便于 accepted 判定
-                            try { door.QueueStateChange((Door.ControlState)target); } catch { }
+                            // 兜底：旧路径（反射写 controlState + ApplyControlState）
+                            var fCur = t.GetField("controlState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                            var mApply = t.GetMethod("ApplyControlState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                            if (fCur == null || mApply == null)
+                            {
+                                instantNote = "反射没找到 ApplyRequestedControlState / requestState，也没找到 controlState/ApplyControlState";
+                            }
+                            else
+                            {
+                                fCur.SetValue(door, (Door.ControlState)target);
+                                mApply.Invoke(door, null);
+                                instantNote = "instant：兜底路径（写 controlState + ApplyControlState()）";
+                            }
                         }
                     }
                     else

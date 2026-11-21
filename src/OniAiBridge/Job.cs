@@ -70,6 +70,8 @@ namespace OniAiBridge
             // 区域路径：x0/y0/x1/y1（框）或 cx/cy（块）都走这里；单格/radius 走下面老代码
             // ★ M6.76（0.92.0）：打标记那批（消毒/清空管道/攻击/捕捉/拖地）
             if (JobMarks.IsMarkType(t0)) return JobMarks.Execute(t0, body, out status, out code, out message, out details);
+            // ★ 0.114.0：取消待办标记（蓝图 / 挖标记 / 拆解标记）—— 玩家等价操作，不挂作弊闸门
+            if (CancelJob.IsCancelType(t0)) return CancelJob.Execute(body, out status, out code, out message, out details);
             if (t0 == "build" && HasKey(body, "wirePath")) return BuildWirePath(body, out status, out code, out message, out details);
             if (t0 == "dig" && (HasKey(body, "x0") || HasKey(body, "cx"))) return DigRegionExecute(body, out status, out code, out message);
             // M6.13：对象级 type 的区域模式（**不照抄 dig**：格内有歧义就跳过并计数）

@@ -16,7 +16,7 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.113.2";
+        public const string ModVersion = "0.114.0";
         public const string Stage = "M7.5";
 
         static BridgeSettings settings;

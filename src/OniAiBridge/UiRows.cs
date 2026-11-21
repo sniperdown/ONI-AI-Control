@@ -365,6 +365,56 @@ namespace OniAiBridge
         /// （同一响应精简后 898,280 字节）。需要 `index` / `rect` / `clickVia` 等完整字段时，
         /// 请求显式加 `?clickables=full` 即可取回全量输出；两种模式共享同一份采集结果与同一条输出上限。
         /// </summary>
+        /// <summary>
+        /// 0.111.0：控件的屏幕几何 + 可见性分解（UI 自动化"位置"这一半）。
+        /// 坐标系 = **屏幕坐标（左下原点）**，与 /v1/ui/click 的 x/y 同一套。
+        /// 逐条分开报，别只给一个 bool —— 卡在哪一条要一眼看得出：
+        ///   active  : activeInHierarchy
+        ///   alpha   : 自身及所有父级 CanvasGroup.alpha 的乘积
+        ///   w/h     : 屏幕像素尺寸
+        ///   inScreen: 与屏幕矩形有交集
+        /// </summary>
+        internal static void AppendGeometry(StringBuilder sb, Element e)
+        {
+            if (sb == null || e == null) return;
+            UnityEngine.GameObject go = null;
+            try { go = e.Go; } catch { }
+            if (go == null) return;
+            try
+            {
+                var rt = go.transform as UnityEngine.RectTransform;
+                if (rt == null) return;
+                var cam = (UnityEngine.Canvas)null;
+                try { cam = rt.GetComponentInParent<UnityEngine.Canvas>() != null ? null : null; } catch { }
+                var sp = UnityEngine.RectTransformUtility.WorldToScreenPoint(null, rt.position);
+                var sz = UnityEngine.Vector2.Scale(rt.rect.size, rt.lossyScale);
+                float alpha = 1f;
+                try
+                {
+                    var t2 = go.transform;
+                    int guard = 0;
+                    while (t2 != null && guard++ < 32)
+                    {
+                        var cg = t2.GetComponent<UnityEngine.CanvasGroup>();
+                        if (cg != null) alpha *= cg.alpha;
+                        t2 = t2.parent;
+                    }
+                }
+                catch { }
+                bool active = false;
+                try { active = go.activeInHierarchy; } catch { }
+                float sw = UnityEngine.Screen.width, sh = UnityEngine.Screen.height;
+                bool inScreen = (sp.x + sz.x > 0) && (sp.y + sz.y > 0) && (sp.x < sw) && (sp.y < sh);
+
+                sb.Append(",\"centerX\":").Append((int)sp.x).Append(",\"centerY\":").Append((int)sp.y);
+                sb.Append(",\"w\":").Append((int)sz.x).Append(",\"h\":").Append((int)sz.y);
+                sb.Append(",\"active\":").Append(active ? "true" : "false");
+                sb.Append(",\"alpha\":").Append(alpha.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                sb.Append(",\"inScreen\":").Append(inScreen ? "true" : "false");
+                sb.Append(",\"visible\":").Append((active && alpha > 0.001f && sz.x > 0 && sz.y > 0 && inScreen) ? "true" : "false");
+            }
+            catch { }
+        }
         internal static void AppendJsonCompact(StringBuilder sb, Element e)
         {
             if (e == null || sb == null) return;
@@ -372,6 +422,7 @@ namespace OniAiBridge
             sb.Append(",\"role\":").Append(Snap.Str(e.Role));
             sb.Append(",\"text\":").Append(Snap.Str(e.Text));
             sb.Append(",\"path\":").Append(Snap.Str(e.Path));
+            AppendGeometry(sb, e);
             sb.Append('}');
         }
 

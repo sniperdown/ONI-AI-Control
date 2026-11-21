@@ -1,8 +1,11 @@
 # ONI AI Control
 
+<img src="docs/assets/steam-cover.png" width="200" align="right" alt="ONI AI Control">
+
 > 仓库名 `ONI-AI-Control` ｜ 中文名「缺氧 AI 操控」
 > **内部标识沿用旧名 `OniAiBridge`**（DLL 名、`staticID`、配置目录 `mods/config/OniAiBridge/` 都不变），
 > 所以老配置继续有效；只是游戏里显示的 mod 名改成了 `ONI AI Control`。
+> Steam 创意工坊：已上架（名字同样搜 `ONI AI Control`）
 
 **需要注意的是这个mod目前仅仅是把游戏内的操作都暴露出来了，面板需要等作者本人实现，或者等作者腰包宽松一些再写**
 **希望加速？https://ifdian.net/a/justdoit72943816**

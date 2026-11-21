@@ -4,7 +4,8 @@
 并补齐了"撤回 / 删除 / 门 / 作息"四块原本缺的手。
 
 > 版本号：**1.0.0**（由 0.116.1 升上来；语义=接口层收口、可对外）
-> 仓库：`ONI-AI-Control` ｜ 游戏内显示名：`ONI AI Control` ｜ **内部标识仍为 `OniAiBridge`**
+> 仓库：`ONI-AI-Control` ｜ 游戏内显示名 / Steam 创意工坊名：`ONI AI Control` ｜ **内部标识仍为 `OniAiBridge`**
+> 发布渠道：GitHub Release `v1.0.0` + **Steam 创意工坊（2026-11-21 上架）**
 > （DLL 名、`staticID`、配置目录 `mods/config/OniAiBridge/` 均未变，老配置继续有效）
 
 ### 这一版新增的手

@@ -16,7 +16,7 @@ namespace OniAiBridge
     internal static class Bridge
     {
         public const string ApiVersion = "1.1";
-        public const string ModVersion = "0.115.0";
+        public const string ModVersion = "0.116.0";
         public const string Stage = "M7.5";
 
         static BridgeSettings settings;
@@ -603,7 +603,10 @@ namespace OniAiBridge
                     return;                case "/v1/door":
                     if (method != "POST") { WriteJson(client, 405, Error("METHOD_NOT_ALLOWED", "use POST")); return; }
                     HandleDoor(client, body);
-                    return;                case "/v1/state": HandleState(client, query); return;
+                    return;                case "/v1/schedule":
+                    HandleSchedule(client, body, method);
+                    return;
+                case "/v1/state": HandleState(client, query); return;
                 case "/v1/commands": WriteJson(client, 200, Ok(Commands.CommandsJson())); return;
                 case "/v1/events": HandleSse(client, lines, query); return;
                 case "/v1/command":
@@ -684,6 +687,20 @@ namespace OniAiBridge
             if (data == null) { WriteJson(client, st2, Error(c2 ?? "ERROR", m2 ?? "unknown")); return; }
             WriteJson(client, 200, Ok(data));
         }
+        // ---------------- /v1/schedule（作息表读取与修改，0.116.0）----------------
+        static void HandleSchedule(TcpClient client, string body, string method)
+        {
+            if (!MainThread.Ready) { WriteJson(client, 503, Error("NOT_READY", "main-thread pump is not running yet")); return; }
+            int st3 = 0; string c3 = null, m3 = null; string data = null;
+            bool ran = MainThread.Invoke(() =>
+            {
+                data = ScheduleApi.Handle(body, method == "POST", out st3, out c3, out m3);
+            }, 3000);
+            if (!ran) { WriteJson(client, 503, Error("RETRY_LATER", "main thread busy")); return; }
+            if (data == null) { WriteJson(client, st3, Error(c3 ?? "ERROR", m3 ?? "unknown")); return; }
+            WriteJson(client, 200, Ok(data));
+        }
+
         // ---------------- /v1/buildings（M5.4，带迷雾过滤）----------------
         static void HandleBuildings(TcpClient client, string query)
         {

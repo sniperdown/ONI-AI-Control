@@ -48,3 +48,9 @@ Select-String -Path "$ref\*.cs" -Pattern 'MoveToSafety' | Select-Object -First 1
 | 我们的 `cancel` 返回 `cleared=true` 就代表清干净了 | **错**：它只查 `Constructable`，于是"已建成的建筑"被算成 `buildingStillThere=false` ⇒ 谎报 `cleared=true`。实测 `(122,209)` 的 `PlasticTile` 取消了却还在。0.116.1 已拆成 `blueprint` / `buildingStillThere` / `nothingToCancel` 三个字段 |
 
 **结论**：以后凡是"我们靠行为猜出来的机制"，一律先到这份参考里核一遍，再写进文档。
+
+## 已用它查清的三件事（详见 [GAME-MECHANICS.md](GAME-MECHANICS.md)）
+
+1. **作业范围**：`OffsetGroups.Standard = InitGrid(-2,2,-3,3)` ⇒ 5×7（我们实测的 5×6 是它的子集）
+2. **`MoveToSafety`**：是 `SafeCellMonitor` 状态机 + `SafeCellSensor` 驱动的 chore，**不是"干完活回撤"**
+3. **取消待办**：真正删对象的是 `Cancellable.OnCancel → DeleteObject()`；`Constructable.OnCancel` 只清材料需求

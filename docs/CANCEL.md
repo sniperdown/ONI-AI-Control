@@ -141,3 +141,15 @@ private void OnCancel(object _ = null)
 | 悬空蓝图 `(121,208)` → cancel | `cleared=true`, `blueprint=false`，3 秒后格子空 ✅ |
 | 已建成 `PlasticTile (122,209)` → cancel | `cleared=false`, `nothingToCancel=true`, `buildingStillThere=true`，建筑仍在 ✅ |
 | 挖掘标记 → cancel | `destroy-scheduled` + `pendingFrame`，下一帧 `digMarked=false` ✅ |
+
+---
+
+# 机制更正（反编译实证，0.116.1 之后）
+
+之前写的"蓝图取消走 `Constructable.OnCancel`"只说对了一半：
+
+- **真正删掉蓝图的是 `Cancellable`**：它订阅 `GameHashes.Cancel(2127324410)`，`OnCancel` 里就是 `this.DeleteObject()`；
+- `Constructable.OnCancel` 只做三件事：关详情窗、`ClearMaterialNeeds()`、`ClearPendingUproots()` —— **不负责删除**；
+- **挖掘的 `DigPlacer` 没有 `Cancellable`** ⇒ 发 Cancel 事件无效（实测 `digMarked` 仍 true），必须销毁 placer。
+
+完整对照表见 [`GAME-MECHANICS.md`](GAME-MECHANICS.md) 第 5 节。

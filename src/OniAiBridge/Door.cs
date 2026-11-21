@@ -29,9 +29,11 @@ namespace OniAiBridge
 
             // ---- 1) 解析请求 ----
             bool instant = Regex.IsMatch(body ?? "", "\"instant\"\\s*:\\s*true", RegexOptions.IgnoreCase);
-            if (instant)
+            if (instant && !Gate.CheatsUnlocked)
             {
-                status = 400; code = "BAD_REQUEST"; message = "instant 模式尚未实现（需要反射写 controlState + ApplyControlState，风险未评估）";
+                // 0.115.0：instant 已实现，但属作弊能力（直接改门的控制状态、不派活）⇒ 必须开闸
+                status = 403; code = Gate.UnavailableCode();
+                message = Gate.UnavailableReason() + "（/v1/door 的 instant 属于作弊能力：它跳过复制人，直接把门的控制状态改掉）";
                 return null;
             }
             int x, y, worldId = -1;
@@ -119,6 +121,7 @@ namespace OniAiBridge
             string beforeCurrent = null, beforeRequested = null;
             bool beforeOpen = false, accepted = false;
             string sendErr = null;
+            string instantNote = null;
 
             MainThread.Invoke(() =>
             {
@@ -128,9 +131,33 @@ namespace OniAiBridge
                     beforeRequested = door.RequestedState.ToString();
                     beforeOpen = door.IsOpen();
 
-                    door.QueueStateChange((Door.ControlState)target);
+                    if (instant)
+                    {
+                        // ★ 0.115.0：作弊径 —— 反射写 `controlState` 再调 `ApplyControlState()`。
+                        //   不走 QueueStateChange（那条会派 chore、要小人跑过去）。
+                        //   ⚠️ 也**不用** DebugHandler.InstantBuildMode：那是"瞬间建造"的副作用，会改全局状态。
+                        var t = door.GetType();
+                        var f = t.GetField("controlState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        var mApply = t.GetMethod("ApplyControlState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        if (f == null || mApply == null)
+                        {
+                            instantNote = "反射没找到 controlState/ApplyControlState（字段=" + (f != null) + " 方法=" + (mApply != null) + "）";
+                        }
+                        else
+                        {
+                            f.SetValue(door, (Door.ControlState)target);
+                            mApply.Invoke(door, null);
+                            instantNote = "instant：已直接写 controlState 并 ApplyControlState()";
+                            // 立刻把请求态也对齐，便于 accepted 判定
+                            try { door.QueueStateChange((Door.ControlState)target); } catch { }
+                        }
+                    }
+                    else
+                    {
+                        door.QueueStateChange((Door.ControlState)target);
+                    }
 
-                    accepted = door.RequestedState == (Door.ControlState)target;
+                    accepted = door.RequestedState == (Door.ControlState)target || door.CurrentState == (Door.ControlState)target;
                 }
                 catch (Exception e) { sendErr = e.GetType().Name + ": " + e.Message; }
             }, 3000);
@@ -168,7 +195,7 @@ namespace OniAiBridge
 
             // ---- 5) 组装响应 ----
             var sb = new StringBuilder(512);
-            sb.Append("{\"mode\":\"normal\"");
+            sb.Append("{\"mode\":").Append(Snap.Str(instant ? "instant" : "normal"));
             sb.Append(",\"action\":").Append(Snap.Str(action));
             sb.Append(",\"target\":{\"worldId\":").Append(foundWorld);
             sb.Append(",\"x\":").Append(x).Append(",\"y\":").Append(y);
@@ -189,6 +216,7 @@ namespace OniAiBridge
                 ? "已派活（ChangeStateChore），等复制人走过去执行；用 currentState 复核，别当成已生效"
                 : "已生效（currentState 已变为 " + wantName + "）";
             if (actionNote != null) note = actionNote + "；" + note;
+            if (instantNote != null) note = instantNote + "；" + note;
             sb.Append(",\"note\":").Append(Snap.Str(note));
             sb.Append('}');
 

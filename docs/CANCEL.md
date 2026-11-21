@@ -55,3 +55,42 @@ POST /v1/job
 
 - **已建成的建筑不会被拆掉** —— 取消只撤"待办"（蓝图 / 挖标记 / 拆解标记），要拆建筑还是用 `deconstruct`。
 - 一次只处理一格；批量取消（框选）还没做。
+
+---
+
+# 实测补充（0.114.1，2026-11-21）
+
+## 两种标记要两种取消方式
+
+| 标记类型 | 载体 | 正确取消方式 | 证据 |
+|---|---|---|---|
+| 蓝图 / 拆解标记 | 正经建筑上的组件 | 发 `GameHashes.Cancel=2127324410` 事件 | 实测 `cleared=true` |
+| **挖掘 / 拖地** | `*Placer` 临时物体 | **销毁载体**（`Util.KDestroyGameObject`） | 只发事件时 `triggered=1` 但 `digMarked` 仍 true |
+
+响应里的 `modes` 字段会写明每一步用的是哪种：`cancel:` 还是 `destroy:`。
+
+## `KDestroyGameObject` 是帧末生效 ⇒ `cleared` 有三种值
+
+同一帧回读会看到旧的标记还在，所以：
+
+```json
+{ "cleared": null, "pendingFrame": true, "jobState": "destroy-scheduled", "modes": ["destroy:"] }
+```
+
+- `cleared:true` = 本帧回读已确认清掉
+- `cleared:false` = 本帧回读确认**没**清掉
+- `cleared:null` + `pendingFrame:true` = 销毁已排队、帧末生效，**下一帧**用 `/v1/marks` 核验
+
+实测：`(113,216)` 取消后立刻回读 `digMarked=true`，两秒后 `dig.marked=false, objectsAtCell=0`。
+
+## 三种用例的验收结果
+
+| 用例 | 结果 |
+|---|---|
+| 悬空蓝图 `(121,208)` → cancel | `cleared=true`，建筑消失（`deconstruct` 对它返回 `NOT_DECONSTRUCTIBLE`，只有 cancel 管用） |
+| 挖标记 `(113,216)` → cancel | `destroy-scheduled` → 下一帧 `dig.marked=false` |
+| 已建成 `PlasticTile (122,209)` → cancel | `cleared=true` 但**建筑仍在** ✅ 不误拆 |
+
+## 沙盒模式下
+
+沙盒把 `build` 变成瞬建，但**挖掘/取消/拆解依旧走标记**，`cancel` 行为不变（实测）。

@@ -53,7 +53,9 @@ namespace OniAiBridge
             }
 
             int hitLayers = 0, triggered = 0;
+            bool destroyedSomething = false;
             var touched = new StringBuilder(160);
+            var touchedKind = new StringBuilder(32);
             try
             {
                 var layers = (ObjectLayer[])Enum.GetValues(typeof(ObjectLayer));
@@ -65,7 +67,27 @@ namespace OniAiBridge
                     hitLayers++;
                     try
                     {
-                        go.Trigger((int)CancelHash);
+                        // ★ 两类标记的取消方式**不同**（0.114.0 实测）：
+                        //   * 蓝图 / 拆解标记：挂在"正经建筑"上，走 `GameHashes.Cancel` 事件即可（实测 cleared=true）
+                        //   * 挖掘 / 拖地：标记载体是 `*Placer` 临时物体，**不吃 Cancel 事件**
+                        //     （实测 triggered=1 但 digMarked 仍为 true）⇒ 按玩家的做法**销毁载体**
+                        //     （docs/ACTION-SURVEY.md §4：玩家取消时销毁 placer）
+                        bool isPlacer = layer.ToString().IndexOf("Placer", StringComparison.OrdinalIgnoreCase) >= 0;
+                        if (!isPlacer)
+                        {
+                            try { isPlacer = go.GetComponent<Diggable>() != null; } catch { }
+                        }
+                        if (isPlacer)
+                        {
+                            Util.KDestroyGameObject(go);
+                            destroyedSomething = true;
+                            touchedKind.Append(touchedKind.Length > 0 ? "," : "").Append("destroy:");
+                        }
+                        else
+                        {
+                            go.Trigger((int)CancelHash);
+                            touchedKind.Append(touchedKind.Length > 0 ? "," : "").Append("cancel:");
+                        }
                         triggered++;
                         if (touched.Length > 0) touched.Append(',');
                         touched.Append(layer.ToString());
@@ -104,7 +126,11 @@ namespace OniAiBridge
             }
             catch { }
 
-            bool cleared = !digAfter && !deconAfter && !blueprintAfter;
+            // ★ 0.114.1 实测：`Util.KDestroyGameObject` 是**帧末生效**的，
+            //   所以同一帧回读 `digMarked` 仍然是 true。碰到这条路就不能说"没清掉"，
+            //   也不能说"清掉了"—— 如实报 `pendingFrame:true` + `cleared:null`，让调用方下一帧再核。
+            bool pendingFrame = destroyedSomething;
+            bool? cleared = pendingFrame ? (bool?)null : (!digAfter && !deconAfter && !blueprintAfter);
 
             var sb = new StringBuilder(512);
             sb.Append("{\"type\":\"cancel\"");
@@ -114,13 +140,17 @@ namespace OniAiBridge
             sb.Append(",\"objectsAtCell\":").Append(hitLayers);
             sb.Append(",\"triggered\":").Append(triggered);
             sb.Append(",\"layers\":[").Append(LayerJson(touched.ToString())).Append(']');
+            sb.Append(",\"modes\":[").Append(LayerJson(touchedKind.ToString())).Append(']');
             sb.Append(",\"readback\":{\"digMarked\":").Append(digAfter ? "true" : "false")
               .Append(",\"deconstructMarked\":").Append(deconAfter ? "true" : "false")
               .Append(",\"buildingStillThere\":").Append(blueprintAfter ? "true" : "false")
               .Append('}');
-            sb.Append(",\"cleared\":").Append(cleared ? "true" : "false");
+            sb.Append(",\"cleared\":").Append(pendingFrame ? "null" : (cleared.Value ? "true" : "false"));
+            sb.Append(",\"pendingFrame\":").Append(pendingFrame ? "true" : "false");
             sb.Append(",\"jobState\":").Append(Snap.Str(
-                hitLayers == 0 ? "nothing-at-cell" : (cleared ? "cleared" : (triggered > 0 ? "partially-cleared" : "no-op"))));
+                hitLayers == 0 ? "nothing-at-cell"
+                : pendingFrame ? "destroy-scheduled"
+                : (cleared.Value ? "cleared" : (triggered > 0 ? "partially-cleared" : "no-op"))));
             sb.Append(",\"note\":").Append(Snap.Str(
                 hitLayers == 0
                   ? "该格没有任何对象（没有标记、也没有建筑），无需取消"

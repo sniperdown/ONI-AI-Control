@@ -10,7 +10,7 @@
     <RootNamespace>OniAiBridge</RootNamespace>
     <Nullable>disable</Nullable>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Version>0.114.0</Version>
+    <Version>0.114.1</Version>
     <Deterministic>true</Deterministic>
     <DebugType>portable</DebugType>
   </PropertyGroup>

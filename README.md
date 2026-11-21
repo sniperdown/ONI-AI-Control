@@ -4,6 +4,9 @@
 > **内部标识沿用旧名 `OniAiBridge`**（DLL 名、`staticID`、配置目录 `mods/config/OniAiBridge/` 都不变），
 > 所以老配置继续有效；只是游戏里显示的 mod 名改成了 `ONI AI Control`。
 
+**需要注意的是这个mod目前仅仅是把游戏内的操作都暴露出来了，面板需要等作者本人实现，或者等作者腰包宽松一些再写**
+**希望加速？https://ifdian.net/a/justdoit72943816**
+
 把《缺氧》(Oxygen Not Included) 的**殖民地状态**与**游戏内操作**通过一个**本机 HTTP API** 暴露出来，
 让任意程序（自己的脚本、AI 客户端、别的工具）能读状态、下命令。
 

@@ -1,3 +1,3 @@
-title: "ONI AI Bridge"
+title: "ONI AI Control"
 description: "Expose colony state and commands over a local HTTP API (127.0.0.1, token-protected). Cheat/debug features are disabled unless you opt in."
 staticID: "OniAiBridge"

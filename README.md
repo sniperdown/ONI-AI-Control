@@ -1,11 +1,17 @@
-# ONI AI Bridge
+# ONI AI Control
+
+> 仓库名 `ONI-AI-Control` ｜ 中文名「缺氧 AI 操控」
+> **内部标识沿用旧名 `OniAiBridge`**（DLL 名、`staticID`、配置目录 `mods/config/OniAiBridge/` 都不变），
+> 所以老配置继续有效；只是游戏里显示的 mod 名改成了 `ONI AI Control`。
 
 把《缺氧》(Oxygen Not Included) 的**殖民地状态**与**游戏内操作**通过一个**本机 HTTP API** 暴露出来，
 让任意程序（自己的脚本、AI 客户端、别的工具）能读状态、下命令。
 
 * 只监听 `127.0.0.1`，所有请求都要 token（首次运行自动生成）。
 * 作弊/调试类操作**默认关闭**，且底层**直接调用游戏自带的 Debug 工具**（不是本项目重写的逻辑）。
-* 目前阶段：**M7.4 / 0.96.1** —— 35 条端点（读状态/建筑/地图/环境/区域/世界/泉/复制人/告警/存档 + 挖/建/打标记/管线/UI 点击/截图 + 请求对账）。
+* 普通操作走的是**游戏自己的路径**：建造=`trybuild` 蓝图 + 复制人施工；拆/挖/门=`QueueDeconstruction` / `PlaceDig` / `QueueStateChange`；作息=`Schedule.Assign`。
+* 目前阶段：**0.116.0** —— 38 条端点（读状态/建筑/地图/环境/区域/世界/泉/复制人/告警/存档 + 挖/建/撤回/摧毁/门/作息/打标记/管线/UI 点击/截图 + 请求对账）。
+  能干什么、还缺什么见 [`docs/RELEASE-1.0-STATUS.md`](docs/RELEASE-1.0-STATUS.md)；
   逐项细节以 [`docs/API.md`](docs/API.md) 为准，版本与改动见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---

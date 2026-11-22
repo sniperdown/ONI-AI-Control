@@ -18,6 +18,50 @@
 [/list]
 作弊功能（瞬间建造、直接摧毁、立即改门状态、生成复制人）[b]默认关闭[/b]，必须在配置文件里打开 allowCheats，且游戏处于沙盒/调试模式才放行。
 
+[h2]怎么用（把 mod 交给 AI 的关键一步）[/h2]
+这个 mod 本身不带 AI，它只提供接口。要让它「被 AI 操作」，你需要把下面两样东西告诉你的 agent（Claude Code / DSH / Cursor / 自己的脚本都行）：
+
+[b]① 手册文件（就在 mod 目录里）[/b]
+[code]Documents\Klei\OxygenNotIncluded\mods\Local\OniAiBridge\AI-GUIDE.md   ← 动手版，先读这个
+Documents\Klei\OxygenNotIncluded\mods\Local\OniAiBridge\API.md        ← 逐端点细节[/code]
+
+[b]② token（首次运行自动生成）[/b]
+[code]Documents\Klei\OxygenNotIncluded\mods\config\OniAiBridge\settings.json   → 字段 "token"[/code]
+所有请求都要带请求头：[code]X-Oni-Token: <token>[/code]，接口地址 [code]http://127.0.0.1:8770[/code]
+
+[h2]直接粘给 AI 的开场白[/h2]
+[code]你是《缺氧》(ONI) 殖民地的操作者。我装了 mod「ONI AI Control」，它在 http://127.0.0.1:8770
+提供本机 HTTP API。
+
+先做三件事：
+1) 读 <mod目录>\AI-GUIDE.md（动手版手册）；需要细节再读同目录 API.md
+2) 从 <Documents>\Klei\OxygenNotIncluded\mods\config\OniAiBridge\settings.json 读 "token"
+3) 每个请求都带 header：X-Oni-Token: <token>
+
+工作方式：
+- 先用 GET /v1/state 看殖民地，再动手
+- 下任何标记前先 POST /v1/reach 确认「小人到得了、这活真的有人干」
+  （reach.workPos.verdict = will_do 才靠谱）
+- 写操作默认关闭；要建造/挖掘/拆解，需要我在游戏里开沙盒或 debug，
+  并把 settings.json 里的 allowCheats 改成 true，否则会返回 403
+- 做完一件事用 GET /v1/marks 或 /v1/buildings 回读，别假设成功[/code]
+
+[h2]最小验证（确认能通）[/h2]
+[code]curl -H "X-Oni-Token: <token>" http://127.0.0.1:8770/v1/state[/code]
+PowerShell：
+[code]Invoke-RestMethod -Uri http://127.0.0.1:8770/v1/state -Headers @{"X-Oni-Token"="<token>"}[/code]
+
+[h2]典型任务长什么样[/h2]
+[list]
+[*] [b]看[/b]：GET /v1/state（殖民地概览）、/v1/buildings（建筑）、/v1/map?bbox=…（逐格元素/温度）
+[*] [b]判[/b]：POST /v1/reach {"cells":[[x,y],…]} → 每格 reachable + workPos
+[*] [b]动[/b]：POST /v1/job {"type":"dig"|"build"|"deconstruct"|"cancel"|"destroy",…}
+[*] [b]管[/b]：POST /v1/door（门）、GET/POST /v1/schedule（作息）、POST /v1/move（走位）
+[/list]
+
+[b]注意[/b]：没人需要去改 mod 的代码 or 直接调游戏内部——所有操作都走上面这套 HTTP 接口，
+底层是游戏自己的代码路径（建造=蓝图+复制人施工，拆=QueueDeconstruction，挖=PlaceDig）。[/b]
+
 [h2]安装[/h2]
 [list]
 [*] 把 mod 文件夹解压到 Documents\Klei\OxygenNotIncluded\mods\Local\ 下

@@ -1,7 +1,9 @@
 # OniAiBridge — AI 操作手册
 
 > 读者是**一个没有任何上下文的 AI**。你不需要先读别的文档，也不需要有人给你 token。
-> 版本：0.96.1 / M7.4（API `apiVersion: "1.1"`）。人看的接口细节在 [`API.md`](API.md)，本文件是**动手版**。
+> 版本：**1.0.0**（API `apiVersion: "1.1"`）。人看的接口细节在 [`API.md`](API.md)，本文件是**动手版**。
+> **1.0.0 新增**：`type=cancel`（撤回标记）、`type=destroy`（沙盒摧毁）、`/v1/door` 的 `instant` 模式、
+> `GET/POST /v1/schedule`（作息表读取与修改）；`/v1/reach` 每格多了 `workPos`（`standableNeighbors` / `verdict`）。
 
 ---
 

@@ -73,6 +73,13 @@ Write-Output "  Copy-Item '$pkg' '$local' -Recurse -Force"
 Write-Output "  然后进游戏：Mods 界面勾选 'ONI AI Bridge' → 重载/重启游戏"
 Write-Output "  验证：Player.log 里 grep '[OniAiBridge]'（应有 OnLoad / listening 两行）"
 
+# ========== 文档随包分发（工坊用户要能读到 AI-GUIDE / API / README）==========
+foreach ($doc in @('AI-GUIDE.md','API.md','README.md')) {
+    $src = Join-Path $PSScriptRoot ('docs\' + $doc)
+    if (-not (Test-Path $src)) { $src = Join-Path $PSScriptRoot $doc }   # README 在仓库根
+    if (Test-Path $src) { Copy-Item $src (Join-Path $pkg $doc) -Force; Write-Host ("  打包文档: " + $doc) }
+    else { Write-Host ("  跳过（不存在）: " + $doc) -ForegroundColor Yellow }
+}
 # ========== 版本号一致性校验（mod_info.yaml / csproj / Bridge.cs 必须相同）==========
 $vYaml = (Select-String -Path (Join-Path $PSScriptRoot 'mod\mod_info.yaml') -Pattern '^version:\s*(\S+)').Matches[0].Groups[1].Value
 $vProj = (Select-String -Path (Join-Path $PSScriptRoot 'src\OniAiBridge\OniAiBridge.csproj') -Pattern '<Version>([^<]+)</Version>').Matches[0].Groups[1].Value

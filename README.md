@@ -49,6 +49,34 @@ curl -s -H "X-Oni-Token: $TOKEN" http://127.0.0.1:8770/v1/meta
 
 ---
 
+## 怎么用（把 mod 交给 AI）
+
+这个 mod 本身不带 AI，它只提供接口。要让它被 AI 操作，把下面两样告诉你的 agent 就行：
+
+| 给什么 | 在哪 |
+|---|---|
+| **操作手册** | `mods\Local\OniAiBridge\AI-GUIDE.md`（动手版）；细节在 `API.md` |
+| **token** | `mods\config\OniAiBridge\settings.json` 的 `"token"` 字段，请求头 `X-Oni-Token: <token>` |
+
+可以直接把这段粘给 agent：
+
+```
+你是《缺氧》(ONI) 殖民地的操作者。我装了 mod「ONI AI Control」，它在 http://127.0.0.1:8770 提供本机 HTTP API。
+
+先做三件事：
+1) 读 <mod目录>\AI-GUIDE.md（动手版）；需要细节再读同目录 API.md
+2) 从 <Documents>\Klei\OxygenNotIncluded\mods\config\OniAiBridge\settings.json 读 "token"
+3) 每个请求都带 header：X-Oni-Token: <token>
+
+工作方式：
+- 先用 GET /v1/state 看殖民地，再动手
+- 下任何标记前先 POST /v1/reach，确认「小人到得了、这活真的有人干」（workPos.verdict = will_do）
+- 写操作默认关闭：要建造/挖掘/拆解，需要我在游戏里开沙盒或 debug 且 settings.json 的 allowCheats=true，否则 403
+- 做完用 GET /v1/marks 或 /v1/buildings 回读，别假设成功
+```
+
+---
+
 ## 安装
 
 1. 从 Releases 或自己构建（见下）拿到 `OniAiBridge/` 文件夹。
